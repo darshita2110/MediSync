@@ -32,6 +32,9 @@ app.use('/api/auth', authRoutes);
 const patientRoutes = require('./routes/patients.routes');
 app.use('/api/patients', patientRoutes);
 
+const accessRoutes = require('./routes/access.routes');
+app.use('/api', accessRoutes);
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
