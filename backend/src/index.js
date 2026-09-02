@@ -38,3 +38,6 @@ app.use('/api', accessRoutes);
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+const prescriptionRoutes = require('./routes/prescriptions.routes');
+app.use('/api', prescriptionRoutes);
