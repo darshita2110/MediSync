@@ -1,5 +1,6 @@
 // src/controllers/patients.controller.js
 // Create a patient (caller becomes owner) and list patients the caller can access.
+const { logAction } = require('../utils/audit');
 
 const db = require('../config/db');
 
@@ -34,6 +35,8 @@ async function createPatient(req, res) {
     );
 
     await client.query('COMMIT');
+    await logAction(patient.id, userId, 'patient.created', { full_name: patient.full_name });
+    
     return res.status(201).json({ patient });
   } catch (err) {
     await client.query('ROLLBACK');   // undo everything if any step failed

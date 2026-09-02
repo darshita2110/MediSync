@@ -1,5 +1,6 @@
 // src/controllers/access.controller.js
 // Invite a user to a patient, accept an invite, and list a patient's access.
+const { logAction } = require('../utils/audit');
 
 const db = require('../config/db');
 
@@ -56,6 +57,8 @@ async function inviteUser(req, res) {
       [patientId, invitee.id, role, inviterId]
     );
 
+    await logAction(patientId, inviterId, 'access.invited', { invited_user: invitee.id, role });
+
     return res.status(201).json({ invite: accessResult.rows[0] });
   } catch (err) {
     if (err.code === '23505') {
@@ -102,6 +105,8 @@ async function acceptInvite(req, res) {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'No pending invite found for you with that id' });
     }
+    await logAction(result.rows[0].patient_id, userId, 'access.accepted', { access_id: accessId });
+    
     return res.json({ access: result.rows[0] });
   } catch (err) {
     console.error('Accept invite error:', err);
