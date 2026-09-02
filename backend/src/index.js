@@ -26,6 +26,9 @@ app.get("/api/health/db", async (req, res) => {
   }
 });
 
+const authRoutes = require('./routes/auth.routes');
+app.use('/api/auth', authRoutes);
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
