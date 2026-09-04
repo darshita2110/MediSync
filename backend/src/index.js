@@ -41,3 +41,6 @@ app.listen(PORT, () => {
 
 const prescriptionRoutes = require('./routes/prescriptions.routes');
 app.use('/api', prescriptionRoutes);
+
+const conflictRoutes = require('./routes/conflicts.routes');
+app.use('/api', conflictRoutes);
