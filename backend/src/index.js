@@ -44,3 +44,6 @@ app.use('/api', prescriptionRoutes);
 
 const conflictRoutes = require('./routes/conflicts.routes');
 app.use('/api', conflictRoutes);
+
+const scheduleRoutes = require('./routes/schedules.routes');
+app.use('/api', scheduleRoutes);
