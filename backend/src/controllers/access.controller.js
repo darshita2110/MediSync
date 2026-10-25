@@ -1,144 +1,70 @@
-// src/controllers/access.controller.js
-// Invite a user to a patient, accept an invite, and list a patient's access.
-const { logAction } = require('../utils/audit');
-
 const db = require('../config/db');
+const { logAction } = require('../utils/audit');
+const v = require('../utils/validation');
+const { HttpError, badRequest } = require('../utils/errors');
+const { transaction } = require('../utils/transaction');
+const { lockPatient } = require('../services/reconciliation');
 
-const INVITABLE_ROLES = ['family_admin', 'helper', 'viewer'];
-
-// Helper: does this user have an accepted access row for this patient,
-// and if so, what role? Returns the role string or null.
-async function getAccessRole(userId, patientId) {
-  const result = await db.query(
-    `SELECT role FROM patient_access
-     WHERE user_id = $1 AND patient_id = $2 AND status = 'accepted'`,
-    [userId, patientId]
-  );
-  return result.rows[0] ? result.rows[0].role : null;
-}
-
-// POST /api/patients/:patientId/invites
-// Owner (or family_admin) invites someone by email at a given role.
 async function inviteUser(req, res) {
-  const inviterId = req.user.id;
-  const { patientId } = req.params;
-  const { email, role } = req.body;
-
-  if (!email || !role) {
-    return res.status(400).json({ error: 'email and role are required' });
-  }
-  if (!INVITABLE_ROLES.includes(role)) {
-    return res.status(400).json({ error: `role must be one of: ${INVITABLE_ROLES.join(', ')}` });
-  }
-
+  const email = v.email(req.body.email);
+  const { role } = req.body;
+  if (!['family_admin', 'helper', 'viewer'].includes(role)) badRequest('role must be family_admin, helper or viewer');
+  const invitee = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  if (!invitee.rows.length) throw new HttpError(404, 'No user with that email. Ask them to sign up first.');
+  let result;
   try {
-    // 1. The inviter must be an owner or family_admin of this patient.
-    const inviterRole = await getAccessRole(inviterId, patientId);
-    if (inviterRole !== 'owner' && inviterRole !== 'family_admin') {
-      return res.status(403).json({ error: 'You do not have permission to invite people to this patient' });
-    }
-
-    // 2. Find the user being invited (they must already have an account).
-    const userResult = await db.query(
-      `SELECT id, email, name FROM users WHERE email = $1`,
-      [email.toLowerCase()]
-    );
-    const invitee = userResult.rows[0];
-    if (!invitee) {
-      return res.status(404).json({ error: 'No user with that email. Ask them to sign up first.' });
-    }
-
-    // 3. Create a pending access row. If one already exists, the UNIQUE
-    //    (patient_id, user_id) constraint (code 23505) tells us so.
-    const accessResult = await db.query(
+    result = await db.query(
       `INSERT INTO patient_access (patient_id, user_id, role, status, invited_by)
-       VALUES ($1, $2, $3, 'pending', $4)
-       RETURNING id, patient_id, user_id, role, status`,
-      [patientId, invitee.id, role, inviterId]
-    );
-
-    await logAction(patientId, inviterId, 'access.invited', { invited_user: invitee.id, role });
-
-    return res.status(201).json({ invite: accessResult.rows[0] });
+       VALUES ($1, $2, $3, 'pending', $4) RETURNING id, patient_id, user_id, role, status`,
+      [req.params.patientId, invitee.rows[0].id, role, req.user.id]);
   } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'That person already has access (or a pending invite) for this patient' });
-    }
-    console.error('Invite error:', err);
-    return res.status(500).json({ error: 'Something went wrong' });
+    if (err.code === '23505') throw new HttpError(409, 'That person already has access or a pending invite');
+    throw err;
   }
+  await logAction(req.params.patientId, req.user.id, 'access.invited', { invited_user: invitee.rows[0].id, role });
+  return res.status(201).json({ invite: result.rows[0] });
 }
 
-// GET /api/invites  — invites waiting for the logged-in user to accept.
 async function listMyInvites(req, res) {
-  const userId = req.user.id;
-  try {
-    const result = await db.query(
-      `SELECT pa.id, pa.role, pa.created_at,
-              p.id AS patient_id, p.full_name AS patient_name
-       FROM patient_access pa
-       JOIN patients p ON p.id = pa.patient_id
-       WHERE pa.user_id = $1 AND pa.status = 'pending'
-       ORDER BY pa.created_at DESC`,
-      [userId]
-    );
-    return res.json({ invites: result.rows });
-  } catch (err) {
-    console.error('List invites error:', err);
-    return res.status(500).json({ error: 'Something went wrong' });
-  }
+  const result = await db.query(
+    `SELECT pa.id, pa.role, pa.created_at, p.id AS patient_id, p.full_name AS patient_name
+     FROM patient_access pa JOIN patients p ON p.id = pa.patient_id
+     WHERE pa.user_id = $1 AND pa.status = 'pending' ORDER BY pa.created_at DESC`,
+    [req.user.id]);
+  return res.json({ invites: result.rows });
 }
 
-// POST /api/invites/:accessId/accept  — the invited user accepts.
 async function acceptInvite(req, res) {
-  const userId = req.user.id;
-  const { accessId } = req.params;
-  try {
-    // Only flip a row that belongs to THIS user and is still pending.
-    const result = await db.query(
-      `UPDATE patient_access
-       SET status = 'accepted', accepted_at = now()
-       WHERE id = $1 AND user_id = $2 AND status = 'pending'
-       RETURNING id, patient_id, role, status`,
-      [accessId, userId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'No pending invite found for you with that id' });
-    }
-    await logAction(result.rows[0].patient_id, userId, 'access.accepted', { access_id: accessId });
-    
-    return res.json({ access: result.rows[0] });
-  } catch (err) {
-    console.error('Accept invite error:', err);
-    return res.status(500).json({ error: 'Something went wrong' });
-  }
+  const result = await db.query(
+    `UPDATE patient_access SET status = 'accepted', accepted_at = now()
+     WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING id, patient_id, role, status`,
+    [req.params.accessId, req.user.id]);
+  if (!result.rows.length) throw new HttpError(404, 'No pending invite found for you with that id');
+  await logAction(result.rows[0].patient_id, req.user.id, 'access.accepted', { access_id: req.params.accessId });
+  return res.json({ access: result.rows[0] });
 }
 
-// GET /api/patients/:patientId/access  — who can see this patient.
 async function listAccess(req, res) {
-  const userId = req.user.id;
-  const { patientId } = req.params;
-  try {
-    // Caller must have access to this patient to see its access list.
-    const callerRole = await getAccessRole(userId, patientId);
-    if (!callerRole) {
-      return res.status(403).json({ error: 'You do not have access to this patient' });
-    }
-
-    const result = await db.query(
-      `SELECT pa.id, pa.role, pa.status, pa.created_at,
-              u.id AS user_id, u.email, u.name
-       FROM patient_access pa
-       JOIN users u ON u.id = pa.user_id
-       WHERE pa.patient_id = $1
-       ORDER BY pa.created_at`,
-      [patientId]
-    );
-    return res.json({ access: result.rows });
-  } catch (err) {
-    console.error('List access error:', err);
-    return res.status(500).json({ error: 'Something went wrong' });
-  }
+  const result = await db.query(
+    `SELECT pa.id, pa.role, pa.status, pa.created_at, u.id AS user_id, u.email, u.name
+     FROM patient_access pa JOIN users u ON u.id = pa.user_id
+     WHERE pa.patient_id = $1 ORDER BY pa.created_at`, [req.params.patientId]);
+  return res.json({ access: result.rows });
 }
 
-module.exports = { inviteUser, listMyInvites, acceptInvite, listAccess };
+async function revokeAccess(req, res) {
+  const { patientId, accessId } = req.params;
+  await transaction(async client => {
+    await lockPatient(client, patientId);
+    const existing = await client.query('SELECT role, user_id FROM patient_access WHERE id = $1 AND patient_id = $2 FOR UPDATE', [accessId, patientId]);
+    if (!existing.rows.length) throw new HttpError(404, 'Access record not found for this patient');
+    if (existing.rows[0].role === 'owner') throw new HttpError(409, 'The owner cannot be removed');
+    await client.query('DELETE FROM patient_access WHERE id = $1 AND patient_id = $2', [accessId, patientId]);
+    await client.query(
+      `INSERT INTO audit_log (patient_id, actor_user_id, action, details) VALUES ($1, $2, 'access.revoked', $3)`,
+      [patientId, req.user.id, { access_id: accessId, user_id: existing.rows[0].user_id, role: existing.rows[0].role }]);
+  });
+  return res.json({ revoked: true });
+}
+
+module.exports = { inviteUser, listMyInvites, acceptInvite, listAccess, revokeAccess };

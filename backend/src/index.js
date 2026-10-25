@@ -1,49 +1,25 @@
-require("dotenv").config();
+require('dotenv').config({ quiet: true });
 
-const express = require("express");
-const db = require("./config/db");
+if (!process.env.DATABASE_URL || !process.env.JWT_SECRET) {
+  throw new Error('DATABASE_URL and JWT_SECRET must be configured');
+}
+if (process.env.NODE_ENV === 'production' && process.env.JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must contain at least 32 characters in production');
+}
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const app = require('./app');
+const db = require('./config/db');
+const port = Number(process.env.PORT || 3000);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535');
 
-app.use(express.json());
-
-app.get("/", (req, res) => {
-  res.send("MediSync API is alive");
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", service: "medisync" });
-});
-
-app.get("/api/health/db", async (req, res) => {
-  try {
-    const result = await db.query("SELECT NOW() AS now");
-    res.json({ status: "ok", db_time: result.rows[0].now });
-  } catch (err) {
-    console.error("DB health check failed:", err.message);
-    res.status(500).json({ status: "error", message: "database unreachable" });
-  }
-});
-
-const authRoutes = require('./routes/auth.routes');
-app.use('/api/auth', authRoutes);
-
-const patientRoutes = require('./routes/patients.routes');
-app.use('/api/patients', patientRoutes);
-
-const accessRoutes = require('./routes/access.routes');
-app.use('/api', accessRoutes);
-
-const prescriptionRoutes = require('./routes/prescriptions.routes');
-app.use('/api', prescriptionRoutes);
-
-const conflictRoutes = require('./routes/conflicts.routes');
-app.use('/api', conflictRoutes);
-
-const scheduleRoutes = require('./routes/schedules.routes');
-app.use('/api', scheduleRoutes);
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+const server = app.listen(port, () => console.log(`MediSync API listening on port ${port}`));
+function shutdown() {
+  const timeout = setTimeout(() => process.exit(1), 10000);
+  timeout.unref();
+  server.close(async () => {
+    await db.pool.end();
+    clearTimeout(timeout);
+  });
+}
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

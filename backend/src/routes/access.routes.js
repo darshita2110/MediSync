@@ -1,22 +1,13 @@
-// src/routes/access.routes.js
-
 const express = require('express');
 const { requireAuth } = require('../middleware/auth.middleware');
-const {
-  inviteUser,
-  listMyInvites,
-  acceptInvite,
-  listAccess,
-} = require('../controllers/access.controller');
-
+const { requirePatientAccess, requireRoles, readMedicalRecords } = require('../middleware/access.middleware');
+const { registerIds } = require('../utils/validation');
+const c = require('../controllers/access.controller');
 const router = express.Router();
-
-// Invites addressed to the logged-in user (not tied to one patient).
-router.get('/invites', requireAuth, listMyInvites);
-router.post('/invites/:accessId/accept', requireAuth, acceptInvite);
-
-// Access management for a specific patient.
-router.post('/patients/:patientId/invites', requireAuth, inviteUser);
-router.get('/patients/:patientId/access', requireAuth, listAccess);
-
+registerIds(router, ['patientId', 'accessId']);
+router.get('/invites', requireAuth, c.listMyInvites);
+router.post('/invites/:accessId/accept', requireAuth, c.acceptInvite);
+router.post('/patients/:patientId/invites', requireAuth, requirePatientAccess, requireRoles('owner'), c.inviteUser);
+router.get('/patients/:patientId/access', requireAuth, requirePatientAccess, readMedicalRecords, c.listAccess);
+router.delete('/patients/:patientId/access/:accessId', requireAuth, requirePatientAccess, requireRoles('owner'), c.revokeAccess);
 module.exports = router;
