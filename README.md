@@ -33,8 +33,8 @@ that can't be double-confirmed.
   medicines and flags duplicates prescribed across different doctors.
 - **Schedules & doses** — turn a rule ("once daily at 8am") into concrete
   dose events on a timeline that caregivers mark taken/skipped. A unique
-  constraint prevents both duplicate dose generation and double
-  confirmation.
+  constraint prevents duplicate generation; an atomic conditional update
+  prevents a confirmation from overwriting another caregiver's confirmation.
 - **Audit log** — records who did what, since data is shared across people.
 
 ## Tech stack
@@ -57,7 +57,9 @@ src/
   controllers/          # request logic, one file per feature
   routes/               # URL -> controller mapping, one file per feature
   utils/audit.js        # audit-log helper
-  index.js              # app setup + route mounting
+  db/                   # versioned migration runner and legacy schema inspection
+  app.js                # API setup + route mounting (importable by tests)
+  index.js              # environment checks, listening and graceful shutdown
 ```
 
 Every patient-scoped route runs two guards in sequence: `requireAuth`
@@ -68,7 +70,7 @@ transactions.
 
 ## Data model
 
-Ten tables:
+Ten application tables, plus a `schema_migrations` ledger:
 
 | Table                | Purpose                                             |
 |----------------------|-----------------------------------------------------|
@@ -85,7 +87,7 @@ Ten tables:
 
 ## API overview
 
-All `/api` routes except signup/login require an
+All `/api` routes except signup/login and health checks require an
 `Authorization: Bearer <token>` header. Patient-scoped routes also require
 the caller to have accepted access to that patient.
 
@@ -129,24 +131,25 @@ the caller to have accepted access to that patient.
 
 ### Prerequisites
 - Node.js 22.14+ (Node 24 is used for local verification)
-- PostgreSQL 13+
+- PostgreSQL 16+ (PostgreSQL 18 is used for local verification)
 
 ### Setup
 
 ```bash
-# 1. Create the database
+# 1. For a new installation, create an empty database.
+#    Skip this if your medisync database already exists.
 psql -U postgres -c "CREATE DATABASE medisync;"
 
-# 2. Apply the schema ONLY to a new, empty development database.
-#    WARNING: this legacy script drops existing tables and deletes their data.
-psql -U postgres -d medisync -f database/schema.sql
-
-# 3. Install backend dependencies
+# 2. Install the locked backend dependencies.
 cd backend
-npm install
+npm ci
 
-# 4. Configure environment
-#    Copy backend/.env.example to backend/.env (see below)
+# 3. Create backend/.env from .env.example and configure it (see below).
+#    Keep an existing .env; do not overwrite its credentials.
+
+# 4. Inspect and apply versioned migrations; existing compatible data is retained.
+npm run db:status
+npm run db:migrate
 
 # 5. Run
 npm run dev
@@ -158,15 +161,28 @@ npm run dev
 PORT=3000
 DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/medisync
 JWT_SECRET=a-long-random-secret-string
+DATABASE_SCHEMA=public
 ```
 
 > If your password contains special characters (e.g. `#`), percent-encode
 > them in the URL (`#` becomes `%23`).
 
+Generate a unique secret locally with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+and save it as `JWT_SECRET`. Production requires at least 32 characters.
+`.env` is ignored by Git; `.env.example` contains placeholders only.
+
+The same `npm run db:migrate` command supports fresh and existing databases.
+Applied files have checksums and are never reapplied. Failed upgrades roll back;
+the runner never resets patient records. The former `database/schema.sql` is
+retired. See [database/README.md](database/README.md) for migration rules and
+[Docs/API.md](Docs/API.md) for request bodies, response envelopes and client flows.
+
 ## Project status
 
-Stages 1 and 2 are implemented and verified: backend reliability, medicine
-lifecycle management, caregiver revocation and automatic Level 1 reconciliation.
+Stages 1 and 2 are committed: backend reliability, medicine lifecycle management,
+caregiver revocation and automatic Level 1 reconciliation. Stage 3 adds versioned
+migrations, database integrity constraints, automated CI and API documentation.
 The Flutter client, notifications, background jobs, live/offline sync and
 deployment remain in the delivery plan. See [PROGRESS.md](PROGRESS.md) for stage
 status, verification and manual commit checkpoints.
@@ -227,6 +243,7 @@ Only the owner can invite or revoke caregivers. The owner cannot be removed.
 From `backend`:
 
 ```bash
+npm run check
 npm test
 npm run test:integration
 ```
@@ -236,9 +253,15 @@ provided; otherwise they use a local `DATABASE_URL` from `backend/.env`.
 Remote databases require an explicit `TEST_DATABASE_URL`.
 
 Integration tests create a random `medisync_test_*` schema, verify the active
-schema before applying fixtures, and remove that schema on completion.
+schema before applying migrations and fixtures, and remove it on completion.
 They never reset the existing `public` schema. The database user needs permission
 to create schemas. Test credentials are synthetic and are removed with the schema.
+
+GitHub Actions runs the backend checks on pushes and pull requests with Node
+22/24 and PostgreSQL 16/18. It installs the lockfile using `npm ci`, runs syntax,
+unit and integration checks, and verifies repeat application of the migration CLI.
+The workflow's PostgreSQL credentials are synthetic and only used by its
+disposable service. Hosted CI results are available after the commit is pushed.
 
 ## License
 

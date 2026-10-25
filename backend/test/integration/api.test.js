@@ -1,6 +1,5 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
@@ -17,6 +16,7 @@ if (!process.env.TEST_DATABASE_URL && !['localhost', '127.0.0.1', '[::1]'].inclu
 const schema = `medisync_test_${randomUUID().replaceAll('-', '')}`;
 process.env.DATABASE_URL = connectionString;
 process.env.PGOPTIONS = `-c search_path=${schema}`;
+process.env.DATABASE_SCHEMA = schema;
 process.env.JWT_SECRET = 'medisync-integration-tests-only-secret';
 const admin = new Pool({ connectionString, connectionTimeoutMillis: 5000 });
 let db, server, base, owner, helper, viewer, family, outsider, patient, today;
@@ -60,8 +60,8 @@ before(async () => {
   await admin.query(`CREATE SCHEMA ${schema}`);
   db = require('../../src/config/db');
   const current = await db.query('SELECT current_schema() AS schema');
-  assert.equal(current.rows[0].schema, schema, 'Schema isolation must be verified before applying the legacy schema');
-  await db.query(await readFile(path.resolve(__dirname, '../../../database/schema.sql'), 'utf8'));
+  assert.equal(current.rows[0].schema, schema, 'Schema isolation must be verified before applying migrations');
+  await require('../../src/db/migrations').migrate(db.pool, { schema });
   server = require('../../src/app').listen(0, '127.0.0.1');
   await once(server, 'listening');
   base = `http://127.0.0.1:${server.address().port}`;

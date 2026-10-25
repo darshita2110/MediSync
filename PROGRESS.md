@@ -5,9 +5,9 @@ commits manually. Publishing to a remote and deploying are separate actions.
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
-| 1 | Backend reliability: API tests, role boundaries, patient isolation, validation, patient-local scheduling | Verified; staged for manual commit |
-| 2 | Medicine lifecycle, caregiver revocation, automatic and complete Level 1 reconciliation | Verified; unstaged for a separate manual commit |
-| 3 | Incremental migrations, CI, repeatable development and API documentation | Pending |
+| 1 | Backend reliability: API tests, role boundaries, patient isolation, validation, patient-local scheduling | Committed in 37e9e4b |
+| 2 | Medicine lifecycle, caregiver revocation, automatic and complete Level 1 reconciliation | Committed in 37e9e4b |
+| 3 | Incremental migrations, CI, repeatable development and API documentation | Verified; ready for manual commit |
 | 4 | Flutter app: authentication, patients, medicines, prescriptions, caregivers and dose timeline | Pending |
 | 5 | Actionable notifications, background generation, escalation and family alerts | Pending |
 | 6 | Live updates and persistent offline dose queue with first-confirmation-wins handling | Pending |
@@ -45,14 +45,27 @@ will be recorded explicitly; implementation alone does not prove push delivery.
 
 ## Manual commit checkpoints
 
-Git signing is enabled. The agent's stalled signing attempt was cancelled at
-the user's request; the user will make commits manually.
+Git signing is enabled. The user handles commits manually.
+Stages 1 and 2 were committed together in `37e9e4b` and the working tree was
+clean when stage 3 began. The previous staging instructions are superseded.
 
-1. The index contains the verified stage 1 snapshot. Commit the currently staged
-   files with: `fix: harden backend access and patient-local scheduling`.
-2. After that commit, stage the remaining changes and new files (including the
-   reconciliation service and tests). Commit with:
-   `feat: add medicine lifecycle and automatic reconciliation`.
+Stage 3 suggested commit message: `build: add safe database migrations and backend CI`.
+Next implementation stage after that checkpoint: Flutter app.
 
-Next implementation stage: incremental migrations, CI, repeatable setup and
-API documentation. Preserve the two checkpoints above before starting stage 3.
+## Stage 3 verification - 2026-10-25
+
+- `npm run check`, `npm test` and `npm run test:integration` passed:
+  32 JavaScript files checked, 13 unit tests and 42 integration tests passed.
+- Fresh migration setup, repeated application, exact preservation of legacy rows,
+  concurrent migration runners, checksum drift, failed-upgrade rollback,
+  cross-patient database constraints and existing deletion behavior were checked.
+- Applied the migrations to the local PostgreSQL 18.6 database: migration 001
+  adopted the existing schema and migration 002 added integrity checks/indexes.
+  Record counts and content hashes in all ten application tables were identical
+  before and after. Repeated migration application was a no-op.
+- Migration status/CLI verified. The retired `database/schema.sql` no longer
+  drops tables. No runtime dependencies were added.
+- CI workflow prepared for Node 22/24 and PostgreSQL 16/18. Hosted CI has not
+  run during this stage; its result is available after a commit is pushed.
+- Setup and API contract documented in `README.md`, `database/README.md` and
+  `Docs/API.md`.

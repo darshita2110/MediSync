@@ -7,7 +7,10 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "node --test --test-isolation=none test/*.test.js",
-    "test:integration": "node --test --test-isolation=none test/integration/*.test.js"
+    "test:integration": "node --test --test-isolation=none test/integration/*.test.js",
+    "check": "node scripts/check.js",
+    "db:migrate": "node scripts/database.js migrate",
+    "db:status": "node scripts/database.js status"
   },
   "engines": { "node": ">=22.14" },
   "keywords": [],
