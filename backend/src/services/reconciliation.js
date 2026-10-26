@@ -46,11 +46,11 @@ async function lockPatient(client, patientId) {
   await client.query('SELECT id FROM patients WHERE id = $1 FOR UPDATE', [patientId]);
 }
 
-async function reconcileWithClient(client, patientId, actorUserId) {
+async function reconcileWithClient(client, patientId, actorUserId, reference = new Date()) {
   // All reconciliation and prescription/lifecycle writes use the same patient
   // row lock, preventing concurrent checks from inserting the same finding.
   await lockPatient(client, patientId);
-  const patient = await client.query('SELECT (now() AT TIME ZONE timezone)::date::text AS today FROM patients WHERE id = $1', [patientId]);
+  const patient = await client.query('SELECT ($2::timestamptz AT TIME ZONE timezone)::date::text AS today FROM patients WHERE id = $1', [patientId, reference.toISOString()]);
   const result = await client.query(
     `SELECT pi.id, pi.raw_text, pi.brand_name, pi.ingredient, pi.dose_amount, pi.frequency, pi.strength,
             pi.start_date::text, pi.end_date::text, pi.status, pi.replaces_item_id, d.name AS prescriber_name, pr.visit_date::text
@@ -97,4 +97,4 @@ async function reconcile(patientId, actorUserId, client) {
   return transaction(tx => reconcileWithClient(tx, patientId, actorUserId));
 }
 
-module.exports = { findFindings, reconcile, lockPatient };
+module.exports = { findFindings, reconcile, reconcileWithClient, lockPatient };

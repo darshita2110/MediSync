@@ -3,6 +3,7 @@ import '../api.dart';
 import '../models.dart';
 import '../session.dart';
 import 'basic_forms.dart';
+import 'alerts_page.dart';
 import 'patient_page.dart';
 import 'shared.dart';
 
@@ -74,6 +75,11 @@ class _PatientsPageState extends State<PatientsPage> {
           title:
               const Padding(padding: EdgeInsets.only(left: 4), child: Brand()),
           actions: [
+            IconButton(
+                tooltip: 'Care alerts',
+                onPressed: () => Navigator.push<void>(context,
+                    MaterialPageRoute(builder: (_) => AlertsPage(repo: repo))),
+                icon: const Icon(Icons.notifications_none)),
             IconButton(
                 tooltip: 'Refresh care spaces',
                 onPressed: refresh,

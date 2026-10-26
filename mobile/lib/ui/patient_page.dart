@@ -3,6 +3,7 @@ import '../api.dart';
 import '../calendar.dart';
 import '../models.dart';
 import 'care_tabs.dart';
+import 'alerts_page.dart';
 import 'records_tabs.dart';
 import 'shared.dart';
 import 'today_tab.dart';
@@ -67,6 +68,16 @@ class _PatientPageState extends State<PatientPage> {
                   style: const TextStyle(fontSize: 12, color: muted)),
             ]),
             actions: [
+              IconButton(
+                  tooltip: 'Care alerts',
+                  onPressed: () async {
+                    await Navigator.push<void>(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => AlertsPage(repo: widget.repo)));
+                    if (mounted) refresh();
+                  },
+                  icon: const Icon(Icons.notifications_none)),
               IconButton(
                   tooltip: 'Refresh patient view',
                   onPressed: refresh,

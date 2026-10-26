@@ -228,4 +228,71 @@ void main() {
     await openPatient(tester);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+      'alerts show worker status, support shared snooze and persist read state',
+      (tester) async {
+    final server = FakeServer()
+      ..doseTime = DateTime.now().subtract(const Duration(minutes: 1))
+      ..workerAvailable = false;
+    await launch(tester, server);
+    await tester.tap(find.byTooltip('Care alerts'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('not checked in recently'), findsOneWidget);
+    expect(find.textContaining('Phone notifications are not enabled'),
+        findsOneWidget);
+    await tester.ensureVisible(find.text('Snooze 10 min'));
+    await tester.tap(find.text('Snooze 10 min'));
+    await tester.pumpAndSettle();
+    expect(
+        server.requests.where((r) => r.url.path.endsWith('/snooze')).length, 1);
+    expect(find.textContaining('Snoozed until'), findsOneWidget);
+    await tester.ensureVisible(find.text('Mark read'));
+    await tester.tap(find.text('Mark read'));
+    await tester.pumpAndSettle();
+    expect(server.alertRead, isTrue);
+    expect(find.text('Mark read'), findsNothing);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('missed family alert records a late outcome and removes actions',
+      (tester) async {
+    final server = FakeServer()..doseStatus = 'missed';
+    await launch(tester, server);
+    tester.view.physicalSize = const Size(360, 900);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.tap(find.byTooltip('Care alerts'));
+    await tester.pumpAndSettle();
+    expect(find.text('Missed-dose family alert'), findsOneWidget);
+    expect(find.text('Snooze 10 min'), findsNothing);
+    await tester.ensureVisible(takenButton());
+    await tester.pumpAndSettle();
+    await tester.tap(takenButton());
+    await tester.pumpAndSettle();
+    expect(server.doseStatus, 'taken');
+    expect(takenButton(), findsNothing);
+    expect(find.textContaining('Recorded by Priya'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'snoozing cannot overwrite a confirmation won by another caregiver',
+      (tester) async {
+    final server = FakeServer()
+      ..doseTime = DateTime.now().subtract(const Duration(minutes: 1))
+      ..conflictOnConfirm = true;
+    await launch(tester, server);
+    await openPatient(tester);
+    await tester.ensureVisible(find.text('Snooze 10 min'));
+    await tester.tap(find.text('Snooze 10 min'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Already taken by Priya'), findsOneWidget);
+    expect(find.textContaining('Recorded by Priya'), findsOneWidget);
+    expect(find.text('Snooze 10 min'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

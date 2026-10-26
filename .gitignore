@@ -7,3 +7,6 @@ coverage/
 *.jks
 *.keystore
 key.properties
+backend/credentials/
+**/*firebase-adminsdk*.json
+**/service-account*.json

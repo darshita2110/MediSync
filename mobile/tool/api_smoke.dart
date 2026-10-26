@@ -90,8 +90,62 @@ Future<void> main() async {
         'Visit history did not decode');
     check((await repo.caregivers(patient.id)).length == 2,
         'Caregiver access did not decode');
+    final current =
+        DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 30));
+    String two(int value) => value.toString().padLeft(2, '0');
+    final visit = await repo.createPrescription(patient.id, {
+      'visit_date': date,
+      'items': [
+        {'raw_text': 'Reminder fixture (QA)', 'start_date': date}
+      ]
+    });
+    await repo.addSchedule(patient.id, visit.items.single.id, {
+      'time_of_day':
+          '${two(current.hour)}:${two(current.minute)}:${two(current.second)}',
+      'start_date': date
+    });
+    await api
+        .request('POST', '__test_scope/tick', body: {'scope': scope['scope']});
+    var inbox = await repo.alerts();
+    check(inbox.workerRecent, 'Worker heartbeat was not returned');
+    final alert = inbox.alerts
+        .firstWhere((a) => a.dose.medicine == 'Reminder fixture (QA)');
+    check(alert.patient.id == patient.id && alert.dose.canSnooze,
+        'Actionable reminder failed to decode');
+    await repo.readAlert(alert.id);
+    check(
+        (await repo.alerts()).alerts.firstWhere((a) => a.id == alert.id).isRead,
+        'Read state did not persist');
+    await helper.snoozeDose(patient.id, alert.dose.id);
+    check(
+        (await repo.doses(patient.id, date))
+                .firstWhere((d) => d.id == alert.dose.id)
+                .snoozedUntil !=
+            null,
+        'Snooze was not shared');
+    await api.request('POST', '__test_scope/tick', body: {
+      'scope': scope['scope'],
+      'reference': DateTime.now()
+          .add(const Duration(minutes: 46))
+          .toUtc()
+          .toIso8601String()
+    });
+    inbox = await repo.alerts();
+    check(
+        inbox.alerts
+            .any((a) => a.kind == 'missed' && a.dose.id == alert.dose.id),
+        'Family escalation did not reach the owner');
+    check(!(await helper.alerts()).alerts.any((a) => a.kind == 'missed'),
+        'Helpers received family escalation');
+    await helper.confirmDose(patient.id, alert.dose.id, 'taken');
+    check(
+        (await repo.alerts())
+            .alerts
+            .where((a) => a.dose.id == alert.dose.id)
+            .every((a) => a.dose.status == 'taken'),
+        'Late confirmation was not reflected in the inbox');
     stdout.writeln(
-        'PASS: real Dart client signup, patient, doctors, prescriptions, schedules, review, invites, consent and concurrent-dose handling.');
+        'PASS: real Dart client care workflows, reminder worker, inbox, read state, shared snooze, family escalation and late confirmation.');
     stdout.writeln('Synthetic browser QA login: $email / $password');
   } finally {
     api.close();

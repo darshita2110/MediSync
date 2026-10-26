@@ -70,13 +70,13 @@ async function snapshot(pool) {
 }
 
 test('migrations initialize a fresh schema and repeated application is a no-op', async () => isolated(async (pool, schema) => {
-  assert.deepEqual((await migrationStatus(pool, { schema })).map(m => m.status), ['pending', 'pending']);
+  assert.deepEqual((await migrationStatus(pool, { schema })).map(m => m.status), ['pending', 'pending', 'pending']);
   const changed = await migrate(pool, { schema });
-  assert.deepEqual(changed.map(m => m.action), ['applied', 'applied']);
+  assert.deepEqual(changed.map(m => m.action), ['applied', 'applied', 'applied']);
   assert.deepEqual(await migrate(pool, { schema }), []);
-  assert.deepEqual((await migrationStatus(pool, { schema })).map(m => m.status), ['applied', 'applied']);
+  assert.deepEqual((await migrationStatus(pool, { schema })).map(m => m.status), ['applied', 'applied', 'applied']);
   const names = (await pool.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', [schema])).rows.map(t => t.table_name);
-  assert.deepEqual(names.sort(), [...tables, 'schema_migrations'].sort());
+  assert.deepEqual(names.sort(), [...tables, 'schema_migrations', 'dose_reminder_state', 'care_notifications', 'patient_worker_state', 'reminder_worker_status'].sort());
 }));
 
 test('legacy adoption preserves every row in all ten original tables', async () => isolated(async (pool, schema) => {
@@ -84,7 +84,7 @@ test('legacy adoption preserves every row in all ten original tables', async () 
   await seed(pool);
   const before = await snapshot(pool);
   const changed = await migrate(pool, { schema });
-  assert.deepEqual(changed.map(m => m.action), ['adopted', 'applied']);
+  assert.deepEqual(changed.map(m => m.action), ['adopted', 'applied', 'applied']);
   assert.deepEqual(await snapshot(pool), before);
 }));
 
@@ -109,13 +109,13 @@ test('invalid legacy records roll back the full upgrade; fixing the record allow
   assert.deepEqual(await snapshot(pool), before);
   assert.equal((await pool.query("SELECT to_regclass('schema_migrations') AS ledger")).rows[0].ledger, null);
   await pool.query('UPDATE prescription_items SET end_date = NULL WHERE id = $1', [fixture.items[0]]);
-  assert.equal((await migrate(pool, { schema })).length, 2);
+  assert.equal((await migrate(pool, { schema })).length, 3);
 }));
 
 test('concurrent migration runners apply each migration exactly once', async () => isolated(async (pool, schema) => {
   const results = await Promise.all(Array.from({ length: 3 }, () => migrate(pool, { schema })));
-  assert.equal(results.flat().length, 2);
-  assert.equal((await pool.query('SELECT count(*)::integer AS n FROM schema_migrations')).rows[0].n, 2);
+  assert.equal(results.flat().length, 3);
+  assert.equal((await pool.query('SELECT count(*)::integer AS n FROM schema_migrations')).rows[0].n, 3);
 }));
 
 test('checksums tolerate Windows line endings and reject edits to applied files', async () => isolated(async (pool, schema) => {
@@ -134,10 +134,10 @@ test('checksums tolerate Windows line endings and reject edits to applied files'
 test('a failed pending migration rolls back its DDL and leaves the applied ledger intact', async () => isolated(async (pool, schema) => {
   await migrate(pool, { schema });
   await migrationFiles(async temporary => {
-    await fs.writeFile(path.join(temporary, '003_failure.sql'), 'CREATE TABLE should_rollback (id INTEGER); SELECT 1 / 0;');
+    await fs.writeFile(path.join(temporary, '004_failure.sql'), 'CREATE TABLE should_rollback (id INTEGER); SELECT 1 / 0;');
     await assert.rejects(migrate(pool, { schema, directory: temporary }), err => err.code === '22012');
     assert.equal((await pool.query("SELECT to_regclass('should_rollback') AS relation")).rows[0].relation, null);
-    assert.equal((await pool.query('SELECT count(*)::integer AS n FROM schema_migrations')).rows[0].n, 2);
+    assert.equal((await pool.query('SELECT count(*)::integer AS n FROM schema_migrations')).rows[0].n, 3);
   });
 }));
 

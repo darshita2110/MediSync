@@ -16,8 +16,7 @@ indexes. The API and migration commands must use the same schema.
 ## Fresh and existing databases
 
 For a fresh database, the runner applies `001_initial.sql`, then the remaining
-migrations in order. It creates a `schema_migrations` ledger alongside the ten
-application tables.
+migrations in order. It creates a `schema_migrations` ledger alongside the application tables.
 
 For the existing pre-migration MediSync database, it first compares columns,
 types, defaults, nullability, primary/unique/foreign/check constraints, and enum
@@ -37,7 +36,7 @@ dropped every table; it must not be used to upgrade a populated database.
 
 ## Adding a migration
 
-1. Add the next sequential file: `003_description.sql`, `004_description.sql`, etc.
+1. Add the next sequential file: `004_description.sql`, `005_description.sql`, etc.
 2. Keep applied files immutable. SHA-256 checksums reject edited or unknown
    history. Line endings are normalized so Windows and Linux agree.
 3. Put only the forward change in the new file. Do not include `BEGIN`, `COMMIT`,
@@ -69,3 +68,11 @@ constraints even when requests bypass the API.
 
 The GitHub Actions workflow additionally exercises Node 22/24 and PostgreSQL
 16/18 with a dedicated disposable PostgreSQL service.
+
+
+Migration 003 adds durable dose reminder state, per-recipient care notifications,
+patient daily reconciliation checkpoints and the worker heartbeat. It adds a
+composite dose/patient key so inbox entries cannot link a dose from a different
+patient. It does not rewrite existing patient/dose records. Start the separate
+worker only after migrating; its actions are described in
+[Docs/REMINDERS.md](../Docs/REMINDERS.md).

@@ -12,6 +12,8 @@ class FakeServer {
   final requests = <http.Request>[];
   final additionalMedicines = <Json>[];
   String doseStatus = 'pending';
+  DateTime? doseTime, snoozedUntil;
+  bool alertRead = false, workerAvailable = true;
   String get today => dateKey(patientNow('Asia/Kolkata'));
   Json get patient => {
         'id': patientId,
@@ -35,12 +37,15 @@ class FakeServer {
         'medicine': 'Example medicine',
         'dose_amount': '1 tablet as recorded',
         'status': doseStatus,
-        'is_actionable': doseStatus == 'pending',
-        'scheduled_for': '${today}T02:30:00Z',
-        'confirmed_at': doseStatus == 'pending'
+        'is_actionable': doseStatus == 'pending' || doseStatus == 'missed',
+        'scheduled_for':
+            doseTime?.toUtc().toIso8601String() ?? '${today}T02:30:00Z',
+        'snoozed_until': snoozedUntil?.toUtc().toIso8601String(),
+        'confirmed_at': doseStatus == 'pending' || doseStatus == 'missed'
             ? null
             : DateTime.now().toUtc().toIso8601String(),
-        'confirmed_by_name': doseStatus == 'pending' ? null : 'Priya'
+        'confirmed_by_name':
+            doseStatus == 'pending' || doseStatus == 'missed' ? null : 'Priya'
       };
 
   Future<http.Response> handle(http.Request request) async {
@@ -59,6 +64,48 @@ class FakeServer {
       });
     }
     if (unauthorized) return respond({'error': 'Expired'}, 401);
+    if (path == '/api/notifications') {
+      return respond({
+        'notifications': [
+          {
+            ...dose,
+            'id': 'alert-1',
+            'dose_id': 'dose-1',
+            'patient_id': patientId,
+            'patient_name': 'Asha Rao',
+            'timezone': 'Asia/Kolkata',
+            'role': role,
+            'kind': doseStatus == 'missed' ? 'missed' : 'reminder',
+            'created_at': DateTime.now().toUtc().toIso8601String(),
+            'read_at':
+                alertRead ? DateTime.now().toUtc().toIso8601String() : null
+          }
+        ],
+        'next_before': null,
+        'delivery': {
+          'push_configured': false,
+          'last_completed_at':
+              workerAvailable ? DateTime.now().toUtc().toIso8601String() : null
+        },
+      });
+    }
+    if (path.endsWith('/read')) {
+      alertRead = true;
+      return respond({
+        'notification': {'id': 'alert-1'}
+      });
+    }
+    if (path.endsWith('/snooze')) {
+      if (conflictOnConfirm) {
+        doseStatus = 'taken';
+        return respond({
+          'error': 'Already taken',
+          'dose': {'status': 'taken', 'confirmed_by_name': 'Priya'}
+        }, 409);
+      }
+      snoozedUntil = DateTime.now().add(const Duration(minutes: 10));
+      return respond({'dose': dose});
+    }
     if (path == '/api/patients') {
       if (request.method == 'POST') {
         return respond({

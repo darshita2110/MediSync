@@ -70,7 +70,7 @@ transactions.
 
 ## Data model
 
-Ten application tables, plus a `schema_migrations` ledger:
+Fourteen application tables, plus a `schema_migrations` ledger:
 
 | Table                | Purpose                                             |
 |----------------------|-----------------------------------------------------|
@@ -84,6 +84,10 @@ Ten application tables, plus a `schema_migrations` ledger:
 | `schedules`          | repeating dosing rule for a medicine                |
 | `dose_events`        | individual generated doses, confirmed by caregivers |
 | `conflicts`          | detected reconciliation problems                    |
+| `dose_reminder_state` | durable reminder count and shared snooze             |
+| `care_notifications` | per-user reminder and family-alert inbox             |
+| `patient_worker_state` | daily reconciliation checkpoint                    |
+| `reminder_worker_status` | background worker heartbeat                      |
 
 ## API overview
 
@@ -126,6 +130,9 @@ the caller to have accepted access to that patient.
 - `POST  /api/patients/:patientId/doses/generate` — generate upcoming doses
 - `GET   /api/patients/:patientId/doses` — list doses (`?from=&to=`)
 - `PATCH /api/patients/:patientId/doses/:doseId` — confirm taken/skipped
+- `POST /api/patients/:patientId/doses/:doseId/snooze` — shared 10-minute snooze
+- `GET /api/notifications` — caller's care inbox, with optional `before` cursor
+- `PATCH /api/notifications/:notificationId/read` — mark an own alert read
 
 ## Getting started
 
@@ -182,8 +189,10 @@ retired. See [database/README.md](database/README.md) for migration rules and
 
 Stages 1-3 are committed: backend reliability, medicine lifecycle management,
 caregiver revocation, reconciliation, migrations, integrity constraints and CI.
-Stage 4 adds the Flutter core app and browser API integration. Notifications,
-background jobs, live/offline sync and deployment remain in the delivery plan.
+Stage 4 is committed and includes the Flutter core app and browser API integration.
+Stage 5a adds the server reminder worker, shared snoozing, escalation and care
+inbox. Firebase push/action buttons, live/offline sync and deployment remain.
+See [Docs/REMINDERS.md](Docs/REMINDERS.md) to run the worker and prepare Firebase.
 See [PROGRESS.md](PROGRESS.md) for verification and manual commit checkpoints.
 
 ### Run the Flutter client
@@ -223,8 +232,8 @@ Only the owner can invite or revoke caregivers. The owner cannot be removed.
   stops the previous item. A future replacement bounds its previous course and
   schedules to the day before the new course starts, without stopping it early.
 - New prescriptions and lifecycle changes run reconciliation automatically.
-  Explicit checks remain available. Time-driven daily checks will be added with
-  the background worker.
+  Explicit checks remain available. The separate reminder worker also checks
+  each patient's records once per patient-local date.
 - Level 1 flags every duplicate-name pair, different recorded instructions and
   active courses past their recorded end date. Findings include doctor/date
   context and ask the user to check with the prescriber.

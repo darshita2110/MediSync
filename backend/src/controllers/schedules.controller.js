@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { logAction } = require('../utils/audit');
 const { generateForPatient } = require('../services/doses');
+const { actOnDose } = require('../services/dose-actions');
 const v = require('../utils/validation');
 const { HttpError, badRequest } = require('../utils/errors');
 const { transaction } = require('../utils/transaction');
@@ -76,8 +77,8 @@ async function listDoses(req, res) {
   if (from && to && (Date.parse(to) - Date.parse(from)) / 86400000 > 90) badRequest('dose date range cannot exceed 90 days');
   const helper = req.patientRole === 'helper';
   const result = await db.query(
-    `SELECT de.id, de.scheduled_for, de.status, de.confirmed_at, de.confirmed_by,
-            (de.status = 'pending' AND pi.status = 'active' AND s.is_active
+    `SELECT de.id, de.scheduled_for, de.status, de.confirmed_at, de.confirmed_by, rs.snoozed_until, COALESCE(rs.reminders_sent, 0) AS reminders_sent,
+            (de.status IN ('pending', 'missed') AND pi.status = 'active' AND s.is_active
              AND (de.scheduled_for AT TIME ZONE p.timezone)::date >= GREATEST(pi.start_date, s.start_date)
              AND (pi.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= pi.end_date)
              AND (s.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= s.end_date)) AS is_actionable,
@@ -86,6 +87,7 @@ async function listDoses(req, res) {
      JOIN schedules s ON s.id = de.schedule_id AND s.patient_id = de.patient_id
      JOIN prescription_items pi ON pi.id = s.prescription_item_id AND pi.patient_id = de.patient_id
      LEFT JOIN users u ON u.id = de.confirmed_by
+     LEFT JOIN dose_reminder_state rs ON rs.dose_id = de.id
      CROSS JOIN LATERAL (SELECT (now() AT TIME ZONE p.timezone)::date AS today) d
      WHERE de.patient_id = $1
        AND de.scheduled_for >= (
@@ -100,30 +102,15 @@ async function confirmDose(req, res) {
   const { patientId, doseId } = req.params;
   const { status } = req.body;
   if (!['taken', 'skipped'].includes(status)) badRequest("status must be 'taken' or 'skipped'");
-  const result = await db.query(
-    `UPDATE dose_events de SET status = $1, confirmed_by = $2, confirmed_at = now()
-     FROM patients p, schedules s, prescription_items pi
-     WHERE de.id = $3 AND de.patient_id = $4 AND de.status = 'pending'
-       AND p.id = de.patient_id AND s.id = de.schedule_id AND s.patient_id = de.patient_id
-       AND pi.id = s.prescription_item_id AND pi.patient_id = de.patient_id
-       AND pi.status = 'active' AND s.is_active
-       AND (de.scheduled_for AT TIME ZONE p.timezone)::date >= GREATEST(pi.start_date, s.start_date)
-       AND (pi.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= pi.end_date)
-       AND (s.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= s.end_date)
-       AND ($5::boolean = FALSE OR
-         (de.scheduled_for AT TIME ZONE p.timezone)::date = (now() AT TIME ZONE p.timezone)::date)
-     RETURNING de.id, de.status, de.confirmed_at`,
-    [status, req.user.id, doseId, patientId, req.patientRole === 'helper']);
-  if (!result.rows.length) {
-    const existing = await db.query(
-      `SELECT de.status, de.confirmed_at, u.name AS confirmed_by_name
-       FROM dose_events de LEFT JOIN users u ON u.id = de.confirmed_by
-       WHERE de.id = $1 AND de.patient_id = $2`, [doseId, patientId]);
-    if (!existing.rows.length) throw new HttpError(404, 'Dose not found for this patient');
-    return res.status(409).json({ error: 'Dose is already confirmed or is no longer eligible', dose: existing.rows[0] });
-  }
-  await logAction(patientId, req.user.id, 'dose.' + status, { dose_id: doseId });
-  return res.json({ dose: result.rows[0] });
+  const result = await actOnDose(patientId, doseId, req.user.id, status);
+  if (!result.changed) return res.status(409).json({ error: 'Dose is already confirmed or is no longer eligible', dose: result.dose });
+  return res.json({ dose: result.dose });
+}
+
+async function snoozeDose(req, res) {
+  const result = await actOnDose(req.params.patientId, req.params.doseId, req.user.id, 'snooze');
+  if (!result.changed) return res.status(409).json({ error: 'This dose cannot be snoozed. Refresh the timeline to see its current status.', dose: result.dose });
+  return res.json({ dose: result.dose });
 }
 
 async function deactivateSchedule(req, res) {
@@ -142,4 +129,4 @@ async function deactivateSchedule(req, res) {
   return res.json({ schedule });
 }
 
-module.exports = { createSchedule, listSchedules, generateDoses, listDoses, confirmDose, deactivateSchedule };
+module.exports = { createSchedule, listSchedules, generateDoses, listDoses, confirmDose, snoozeDose, deactivateSchedule };

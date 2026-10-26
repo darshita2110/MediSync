@@ -38,6 +38,13 @@ async function stop() {
   await migrate(db.pool, { schema });
   const wrapper = express();
   wrapper.get('/api/__test_scope', (req, res) => res.json({ isolated: true, scope: schema }));
+  wrapper.post('/api/__test_scope/tick', express.json(), async (req, res) => {
+    if (req.body?.scope !== schema) return res.status(403).json({ error: 'Incorrect test scope' });
+    const reference = req.body.reference ? new Date(req.body.reference) : new Date();
+    if (!Number.isFinite(reference.getTime())) return res.status(400).json({ error: 'Invalid test instant' });
+    await require('../../src/services/reminders').runReminderTick(reference);
+    res.json({ completed: true });
+  });
   wrapper.post('/api/__test_scope/close', express.json(), (req, res) => {
     if (req.body?.scope !== schema) return res.status(403).json({ error: 'Incorrect test scope' });
     res.json({ stopping: true });

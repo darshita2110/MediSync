@@ -164,11 +164,13 @@ class DoseCard extends StatefulWidget {
       required this.dose,
       required this.patient,
       required this.repo,
+      this.onBusyChanged,
       required this.onChanged,
       required this.allowConfirm});
   final Dose dose;
   final Patient patient;
   final Repository repo;
+  final ValueChanged<bool>? onBusyChanged;
   final Future<void> Function() onChanged;
   final bool allowConfirm;
   @override
@@ -188,8 +190,14 @@ class _DoseCardState extends State<DoseCard> {
     }
     if (!mounted) return;
     setState(() => busy = true);
+    widget.onBusyChanged?.call(true);
     try {
-      await widget.repo.confirmDose(widget.patient.id, widget.dose.id, status);
+      if (status == 'snooze') {
+        await widget.repo.snoozeDose(widget.patient.id, widget.dose.id);
+      } else {
+        await widget.repo
+            .confirmDose(widget.patient.id, widget.dose.id, status);
+      }
     } catch (e) {
       if (mounted) {
         if (e is ApiException && e.status == 409) {
@@ -199,12 +207,13 @@ class _DoseCardState extends State<DoseCard> {
               context,
               savedStatus == 'taken' || savedStatus == 'skipped'
                   ? 'Already $savedStatus${saved?['confirmed_by_name'] == null ? '' : ' by ${saved!['confirmed_by_name']}'}. The saved confirmation was kept.'
-                  : 'This dose can no longer be confirmed. The timeline has been refreshed.');
+                  : e.message);
         } else {
           notice(context, friendlyError(e));
         }
       }
     } finally {
+      widget.onBusyChanged?.call(false);
       if (mounted) {
         setState(() => busy = false);
         await widget.onChanged();
@@ -243,6 +252,16 @@ class _DoseCardState extends State<DoseCard> {
       Text(dose.medicine, style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
       Text(dose.amount),
+      if (dose.snoozedUntil != null && dose.status == 'pending') ...[
+        const SizedBox(height: 10),
+        Text(
+            'Snoozed until ${patientTime(dose.snoozedUntil!, widget.patient.timezone)}. The missed-dose deadline stays the same.'),
+      ],
+      if (dose.status == 'missed') ...[
+        const SizedBox(height: 10),
+        const Text(
+            'No confirmation was recorded within 45 minutes. If it was given, record the actual outcome below.'),
+      ],
       if (dose.confirmedAt != null) ...[
         const SizedBox(height: 10),
         Text(
@@ -253,7 +272,7 @@ class _DoseCardState extends State<DoseCard> {
         const Text('The original schedule is no longer active.')
       ],
       if (widget.patient.role.canConfirm &&
-          dose.status == 'pending' &&
+          (dose.status == 'pending' || dose.status == 'missed') &&
           dose.actionable &&
           widget.allowConfirm) ...[
         const SizedBox(height: 20),
@@ -270,6 +289,11 @@ class _DoseCardState extends State<DoseCard> {
           OutlinedButton(
               onPressed: busy ? null : () => confirm('skipped'),
               child: const Text('Skip')),
+          if (dose.canSnooze)
+            OutlinedButton.icon(
+                onPressed: busy ? null : () => confirm('snooze'),
+                icon: const Icon(Icons.snooze, size: 19),
+                label: const Text('Snooze 10 min')),
         ]),
       ],
     ]));

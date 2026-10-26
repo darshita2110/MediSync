@@ -28,6 +28,7 @@ app.use('/api', require('./routes/access.routes'));
 app.use('/api', require('./routes/prescriptions.routes'));
 app.use('/api', require('./routes/conflicts.routes'));
 app.use('/api', require('./routes/schedules.routes'));
+app.use('/api/notifications', require('./routes/notifications.routes'));
 
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use((err, req, res, next) => {

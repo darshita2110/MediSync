@@ -472,3 +472,185 @@ test('timeline marks inactive historical pending doses as ineligible', async () 
   list = await api('GET', `/api/patients/${p.id}/doses?from=${today}&to=${today}`);
   assert.equal(list.body.doses[0].is_actionable, false);
 });
+
+// Synthetic clock fixtures exercise production SQL without a 45-minute wait.
+async function reminderFixture(offset = 0) {
+  const p = await newPatient('UTC');
+  const item = await medicine(p.id, { start_date: '2020-01-01' });
+  const rule = await schedule(item, { start_date: '2020-01-01', time_of_day: '23:59' }, p.id);
+  const reference = new Date(Date.now() + offset * 60000);
+  await db.query("UPDATE patient_access SET accepted_at = $2::timestamptz - interval '2 days' WHERE patient_id = $1", [p.id, reference.toISOString()]);
+  for (const [user, role] of [[family, 'family_admin'], [helper, 'helper'], [viewer, 'viewer']]) {
+    await db.query(`INSERT INTO patient_access (patient_id, user_id, role, status, accepted_at)
+      VALUES ($1, $2, $3, 'accepted', $4::timestamptz - interval '2 days')`, [p.id, user.user.id, role, reference.toISOString()]);
+  }
+  const dose = (await db.query(`INSERT INTO dose_events (schedule_id, patient_id, scheduled_for)
+    VALUES ($1, $2, $3) RETURNING *`, [rule.id, p.id, reference.toISOString()])).rows[0];
+  return { patient: p, item, rule, dose, reference, at: minute => new Date(reference.getTime() + minute * 60000) };
+}
+async function alertsFor(id) {
+  return (await db.query('SELECT * FROM care_notifications WHERE dose_id = $1 ORDER BY stage, user_id', [id])).rows;
+}
+
+test('worker generates automatically, sends three reminders, and alerts only family at 45 minutes', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const noon = new Date(); noon.setUTCHours(12, 0, 0, 0);
+  const f = await reminderFixture((noon.getTime() - Date.now()) / 60000);
+  for (const minute of [0, 15, 30, 45]) {
+    await Promise.all([processPatient(f.patient.id, f.at(minute)), processPatient(f.patient.id, f.at(minute))]);
+    await processPatient(f.patient.id, f.at(minute));
+  }
+  const rows = await alertsFor(f.dose.id);
+  assert.equal(rows.filter(n => n.kind === 'reminder').length, 9);
+  assert.equal(rows.filter(n => n.kind === 'missed').length, 2);
+  assert.ok(rows.filter(n => n.kind === 'missed').every(n => [owner.user.id, family.user.id].includes(n.user_id)));
+  assert.ok(rows.every(n => n.user_id !== viewer.user.id));
+  assert.equal((await db.query('SELECT status FROM dose_events WHERE id = $1', [f.dose.id])).rows[0].status, 'missed');
+  assert.equal((await db.query('SELECT reminders_sent FROM dose_reminder_state WHERE dose_id = $1', [f.dose.id])).rows[0].reminders_sent, 3);
+  assert.ok((await db.query('SELECT count(*)::int AS n FROM dose_events WHERE patient_id = $1', [f.patient.id])).rows[0].n > 1);
+});
+
+test('snooze is durable and shared, and never moves the escalation deadline', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const { actOnDose } = require('../../src/services/dose-actions');
+  const noon = new Date(); noon.setUTCHours(12, 0, 0, 0);
+  const f = await reminderFixture((noon.getTime() - Date.now()) / 60000);
+  await processPatient(f.patient.id, f.reference);
+  const result = await actOnDose(f.patient.id, f.dose.id, helper.user.id, 'snooze', f.at(1));
+  assert.ok(result.changed);
+  assert.equal(result.dose.snoozed_until.toISOString(), f.at(11).toISOString());
+  await processPatient(f.patient.id, f.at(10));
+  assert.equal((await alertsFor(f.dose.id)).length, 3);
+  await processPatient(f.patient.id, f.at(11));
+  assert.equal((await alertsFor(f.dose.id)).length, 6);
+  await actOnDose(f.patient.id, f.dose.id, owner.user.id, 'snooze', f.at(40));
+  await processPatient(f.patient.id, f.at(44));
+  assert.equal((await alertsFor(f.dose.id)).length, 6);
+  await processPatient(f.patient.id, f.at(45));
+  assert.equal((await alertsFor(f.dose.id)).filter(n => n.kind === 'missed').length, 2);
+  assert.equal((await actOnDose(f.patient.id, f.dose.id, owner.user.id, 'snooze', f.at(46))).changed, false);
+});
+
+test('missed doses accept one late confirmation and show the saved result in family alerts', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const f = await reminderFixture(-46);
+  await processPatient(f.patient.id, f.at(45));
+  const path = `/api/patients/${f.patient.id}/doses/${f.dose.id}`;
+  const confirmations = await Promise.all([
+    api('PATCH', path, { status: 'taken' }), api('PATCH', path, { status: 'skipped' }, family.token),
+  ]);
+  assert.deepEqual(confirmations.map(r => r.status).sort(), [200, 409]);
+  const saved = (await db.query('SELECT status FROM dose_events WHERE id = $1', [f.dose.id])).rows[0].status;
+  await processPatient(f.patient.id, new Date());
+  assert.equal((await alertsFor(f.dose.id)).length, 2);
+  const inbox = await api('GET', '/api/notifications');
+  assert.equal(inbox.body.notifications.find(n => n.dose_id === f.dose.id).status, saved);
+  assert.equal((await api('POST', path + '/snooze', {})).status, 409);
+});
+
+test('delayed ticks avoid reminder bursts and old backlog emits no family alerts', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const f = await reminderFixture(-26 * 60);
+  await processPatient(f.patient.id, f.at(26 * 60));
+  assert.equal((await alertsFor(f.dose.id)).length, 0);
+  assert.equal((await db.query('SELECT status FROM dose_events WHERE id = $1', [f.dose.id])).rows[0].status, 'missed');
+  const recent = await reminderFixture();
+  await processPatient(recent.patient.id, recent.at(29));
+  await processPatient(recent.patient.id, recent.at(30));
+  assert.equal((await alertsFor(recent.dose.id)).length, 3);
+  await processPatient(recent.patient.id, recent.at(44));
+  assert.equal((await alertsFor(recent.dose.id)).length, 6);
+});
+
+test('inbox is private, read-idempotent, paginated, and respects revocation and helper dates', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const f = await reminderFixture();
+  await processPatient(f.patient.id, f.reference);
+  assert.equal((await api('GET', '/api/notifications', undefined, null)).status, 401);
+  const inbox = await api('GET', '/api/notifications');
+  assert.equal(inbox.status, 200);
+  assert.equal(inbox.body.delivery.push_configured, false);
+  const alert = inbox.body.notifications.find(n => n.dose_id === f.dose.id);
+  assert.ok(alert);
+  assert.equal((await api('PATCH', `/api/notifications/${alert.id}/read`, {}, outsider.token)).status, 404);
+  const first = await api('PATCH', `/api/notifications/${alert.id}/read`, {});
+  const again = await api('PATCH', `/api/notifications/${alert.id}/read`, {});
+  assert.equal(first.status, 200);
+  assert.equal(first.body.notification.read_at, again.body.notification.read_at);
+  assert.equal((await api('GET', '/api/notifications?before=invalid')).status, 400);
+  assert.equal((await api('GET', '/api/notifications', undefined, viewer.token)).body.notifications.length, 0);
+  assert.ok((await api('GET', '/api/notifications', undefined, helper.token)).body.notifications.some(n => n.dose_id === f.dose.id));
+  const access = (await db.query('SELECT id FROM patient_access WHERE patient_id = $1 AND user_id = $2', [f.patient.id, helper.user.id])).rows[0];
+  assert.equal((await api('DELETE', `/api/patients/${f.patient.id}/access/${access.id}`)).status, 200);
+  assert.ok(!(await api('GET', '/api/notifications', undefined, helper.token)).body.notifications.some(n => n.dose_id === f.dose.id));
+  assert.equal((await api('POST', `/api/patients/${f.patient.id}/doses/${f.dose.id}/snooze`, {}, helper.token)).status, 403);
+  await db.query(`INSERT INTO patient_access (patient_id, user_id, role, status, accepted_at)
+    VALUES ($1, $2, 'helper', 'accepted', now())`, [f.patient.id, helper.user.id]);
+  assert.ok(!(await api('GET', '/api/notifications', undefined, helper.token)).body.notifications.some(n => n.dose_id === f.dose.id), 'A new membership must not reveal old alerts');
+  // Seed enough alerts to cross a page boundary, including tied timestamps.
+  await db.query(`INSERT INTO dose_events (schedule_id, patient_id, scheduled_for)
+    SELECT $1, $2, $3::timestamptz + (n * interval '1 hour') FROM generate_series(1, 25) n
+    ON CONFLICT DO NOTHING`, [f.rule.id, f.patient.id, f.reference.toISOString()]);
+  for (let stage = 0; stage < 3; stage++) {
+    await db.query(`INSERT INTO care_notifications (user_id, patient_id, dose_id, kind, stage)
+      SELECT $1, de.patient_id, de.id, 'reminder', $3 FROM dose_events de WHERE de.patient_id = $2
+      ON CONFLICT DO NOTHING`, [owner.user.id, f.patient.id, stage]);
+  }
+  const ids = new Set();
+  let before;
+  do {
+    const page = await api('GET', '/api/notifications' + (before ? `?before=${before}` : ''));
+    for (const row of page.body.notifications) { assert.ok(!ids.has(row.id)); ids.add(row.id); }
+    before = page.body.next_before;
+  } while (before);
+  assert.ok(ids.size > 50);
+});
+
+test('snooze rejects future doses and viewers; stopped medicines produce no alerts', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const f = await reminderFixture(10);
+  const path = `/api/patients/${f.patient.id}/doses/${f.dose.id}/snooze`;
+  assert.equal((await api('POST', path, {})).status, 409);
+  assert.equal((await api('POST', path, {}, viewer.token)).status, 403);
+  await api('PATCH', `/api/patients/${f.patient.id}/items/${f.item.id}`, { status: 'stopped' });
+  await processPatient(f.patient.id, f.at(60));
+  assert.equal((await alertsFor(f.dose.id)).length, 0);
+});
+
+
+test('worker reconciles daily, excludes pending invitations, and updates its heartbeat', async () => {
+  const { processPatient, runReminderTick } = require('../../src/services/reminders');
+  const f = await reminderFixture();
+  await db.query(`INSERT INTO patient_access (patient_id, user_id, role, status, invited_by)
+    VALUES ($1, $2, 'family_admin', 'pending', $3)`, [f.patient.id, outsider.user.id, owner.user.id]);
+  await processPatient(f.patient.id, f.reference);
+  assert.ok((await alertsFor(f.dose.id)).every(n => n.user_id !== outsider.user.id));
+  const yesterday = new Date(f.reference.getTime() - 86400000).toISOString().slice(0, 10);
+  await db.query('UPDATE prescription_items SET end_date = $2 WHERE id = $1', [f.item.id, yesterday]);
+  // A new local calendar day triggers a fresh reconciliation; it does not
+  // require a caregiver opening the app or editing a prescription.
+  await processPatient(f.patient.id, f.at(24 * 60));
+  await processPatient(f.patient.id, f.at(24 * 60));
+  const findings = await db.query("SELECT id FROM conflicts WHERE patient_id = $1 AND kind = 'course_ended'", [f.patient.id]);
+  assert.equal(findings.rows.length, 1);
+  await runReminderTick();
+  const status = (await api('GET', '/api/notifications')).body.delivery;
+  assert.ok(status.last_completed_at);
+});
+
+test('helper inbox excludes previous local dates and confirmation wins against a worker race', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const { actOnDose } = require('../../src/services/dose-actions');
+  const f = await reminderFixture(-24 * 60);
+  await processPatient(f.patient.id, f.reference);
+  const inbox = await api('GET', '/api/notifications', undefined, helper.token);
+  assert.ok(!inbox.body.notifications.some(n => n.dose_id === f.dose.id));
+  await Promise.all([
+    processPatient(f.patient.id, f.at(45)),
+    actOnDose(f.patient.id, f.dose.id, owner.user.id, 'taken', f.at(45)),
+  ]);
+  assert.equal((await db.query('SELECT status FROM dose_events WHERE id = $1', [f.dose.id])).rows[0].status, 'taken');
+  const count = (await alertsFor(f.dose.id)).length;
+  await processPatient(f.patient.id, f.at(50));
+  assert.equal((await alertsFor(f.dose.id)).length, count);
+});

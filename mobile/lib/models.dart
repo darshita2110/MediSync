@@ -139,6 +139,8 @@ class Dose {
       required this.scheduledFor,
       required this.status,
       required this.actionable,
+      this.remindersSent = 0,
+      this.snoozedUntil,
       this.confirmedBy,
       this.confirmedAt});
   factory Dose.fromJson(Json data) => Dose(
@@ -148,6 +150,10 @@ class Dose {
       scheduledFor: DateTime.parse(data['scheduled_for'] as String),
       status: data['status'] as String,
       actionable: data['is_actionable'] as bool? ?? false,
+      remindersSent: data['reminders_sent'] as int? ?? 0,
+      snoozedUntil: data['snoozed_until'] == null
+          ? null
+          : DateTime.parse(data['snoozed_until'] as String),
       confirmedBy: data['confirmed_by_name'] as String?,
       confirmedAt: data['confirmed_at'] == null
           ? null
@@ -157,6 +163,49 @@ class Dose {
   final bool actionable;
   final String? confirmedBy;
   final DateTime? confirmedAt;
+  final int remindersSent;
+  final DateTime? snoozedUntil;
+  bool get canSnooze =>
+      actionable &&
+      status == 'pending' &&
+      remindersSent < 3 &&
+      !scheduledFor.isAfter(DateTime.now()) &&
+      DateTime.now().isBefore(scheduledFor.add(const Duration(minutes: 45)));
+}
+
+class CareAlert {
+  CareAlert.fromJson(Json data)
+      : id = data['id'] as String,
+        kind = data['kind'] as String,
+        createdAt = DateTime.parse(data['created_at'] as String),
+        isRead = data['read_at'] != null,
+        patient = Patient.fromJson({
+          ...data,
+          'id': data['patient_id'],
+          'full_name': data['patient_name']
+        }),
+        dose = Dose.fromJson({...data, 'id': data['dose_id']});
+  final String id, kind;
+  final DateTime createdAt;
+  final bool isRead;
+  final Patient patient;
+  final Dose dose;
+}
+
+class AlertPage {
+  AlertPage.fromJson(Json data)
+      : alerts = decodeList(data['notifications'], CareAlert.fromJson),
+        nextBefore = data['next_before'] as String?,
+        lastWorkerTick = (data['delivery'] as Json)['last_completed_at'] == null
+            ? null
+            : DateTime.parse(
+                (data['delivery'] as Json)['last_completed_at'] as String);
+  final List<CareAlert> alerts;
+  final String? nextBefore;
+  final DateTime? lastWorkerTick;
+  bool get workerRecent =>
+      lastWorkerTick != null &&
+      DateTime.now().difference(lastWorkerTick!) < const Duration(minutes: 3);
 }
 
 class Schedule {

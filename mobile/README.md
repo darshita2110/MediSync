@@ -148,3 +148,22 @@ mounted by the production API.
 
 GitHub Actions checks formatting, analysis, widget/unit tests, real-client API
 integration, and Android/web compilation. Hosted CI runs after pushing the commit.
+
+
+## Stage 5a: care alerts
+
+The bell on the patient list and patient screen opens the authenticated inbox.
+It shows dose reminders and family-only missed-dose alerts, read state and the
+latest shared dose outcome. Taken, Skip and shared Snooze actions use the same
+guarded backend as the timeline. Missed doses can be confirmed late; a saved
+caregiver confirmation cannot be overwritten. Snooze delays the next reminder
+10 minutes without moving the original 45-minute missed deadline.
+
+The inbox refreshes on resume and every 30 seconds while visible. Its current
+implementation displays in-app alerts only; no phone push or lock-screen actions
+are configured. Run both the backend API and `npm run worker` after applying
+migration 003. A stale/absent worker heartbeat is visible in the inbox. Real-time
+patient-screen updates and persistent offline confirmations remain stage 6.
+
+See [Docs/REMINDERS.md](../Docs/REMINDERS.md) for timing rules, worker operation
+and the next Firebase setup checkpoint.

@@ -155,7 +155,7 @@ Replace IDs and dates with actual values returned by earlier requests.
 
    This includes today and the next seven calendar days, constrained by course
    dates and weekdays. Repeating it does not create duplicate dose events.
-   Automatic background generation is planned with the notification worker.
+   The separate reminder worker also generates this horizon automatically. See [REMINDERS.md](REMINDERS.md).
 
 7. Read `GET /api/patients/{patientId}/doses?from=2026-10-25&to=2026-10-25`.
    The entire `to` date is included, in the patient's timezone. Without dates,
@@ -200,4 +200,58 @@ a finding does not itself stop or alter a medicine.
 
 Repeated checks preserve dismissals. Open findings automatically resolve when
 their underlying recorded conflict disappears. `status=all` exposes history.
-Time-driven checks and notification delivery are not implemented yet.
+The reminder worker also reconciles once per patient-local day. Phone push delivery is pending Firebase setup; the authenticated care inbox is implemented.
+
+
+## Reminders, snooze and care inbox
+
+`POST /api/patients/{patientId}/doses/{doseId}/snooze` accepts `{}` and requires
+an owner, family admin or today's helper. A successful `dose` envelope contains
+`id`, `status`, and `snoozed_until`. It delays the next reminder by 10 minutes
+without resetting the original 45-minute missed deadline. Only pending, due,
+active doses with reminders remaining can be snoozed. Otherwise it returns
+`409` with the current saved dose; refresh rather than automatically retrying.
+
+Timeline doses additionally expose `snoozed_until` and `reminders_sent` (0-3).
+`is_actionable` covers eligible pending and missed doses. Missed doses can receive
+a late Taken/Skip confirmation; the first caregiver confirmation still wins.
+Missed means no confirmation was recorded by the deadline, not that a dose
+was necessarily not given.
+
+`GET /api/notifications` returns the authenticated user's visible alerts:
+
+```json
+{
+  "notifications": [],
+  "next_before": null,
+  "delivery": {
+    "channel": "in_app",
+    "push_configured": false,
+    "last_completed_at": null,
+    "last_failed_at": null
+  }
+}
+```
+
+Each notification includes `id`, `dose_id`, `patient_id`, `kind` (`reminder` or
+`missed`), `stage` (0-2 for reminders, 3 for escalation), `created_at`, `read_at`,
+patient name/timezone/current role and the current dose's medicine, amount,
+scheduled instant, status, confirmer, eligibility and snooze/reminder state.
+Alert history always reflects the latest saved dose confirmation. At most 50
+rows are returned in descending creation-time/ID order. Pass
+`?before=<next_before>` for the next page; `null` means there is no next page.
+
+`PATCH /api/notifications/{notificationId}/read` accepts `{}` and returns
+`{ "notification": { "id": "...", "read_at": "..." } }`. Repeating it preserves
+the original read instant. Unrelated, revoked or otherwise invisible alerts
+return `404`. No route can read or mark another user's notification.
+
+Both endpoints require a bearer token and recheck accepted membership on every
+request. Helpers see only today's reminders in the patient's timezone. Family
+escalation is restricted to owners and family admins; viewers receive neither.
+Alerts from a revoked membership remain hidden after re-invitation.
+
+See [REMINDERS.md](REMINDERS.md) for worker startup, outage/restart behavior and
+Firebase setup. The worker does not run inside the API process. A heartbeat
+older than three minutes (or absent) should display a delay warning. No Firebase
+transport or phone notification actions are connected at this checkpoint.

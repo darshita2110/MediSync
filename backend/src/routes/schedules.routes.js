@@ -12,4 +12,5 @@ router.patch('/patients/:patientId/schedules/:scheduleId', ...access, manageMedi
 router.post('/patients/:patientId/doses/generate', ...access, manageMedicines, c.generateDoses);
 router.get('/patients/:patientId/doses', ...access, c.listDoses);
 router.patch('/patients/:patientId/doses/:doseId', ...access, confirmDoses, c.confirmDose);
+router.post('/patients/:patientId/doses/:doseId/snooze', ...access, confirmDoses, c.snoozeDose);
 module.exports = router;

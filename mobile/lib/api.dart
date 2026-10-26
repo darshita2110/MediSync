@@ -153,6 +153,17 @@ class Repository {
         .request('PATCH', 'patients/$p/doses/$id', body: {'status': status});
   }
 
+  Future<void> snoozeDose(String p, String id) async {
+    await api.request('POST', 'patients/$p/doses/$id/snooze', body: {});
+  }
+
+  Future<AlertPage> alerts({String? before}) async =>
+      AlertPage.fromJson(await api.request('GET', 'notifications',
+          query: before == null ? null : {'before': before}));
+  Future<void> readAlert(String id) async {
+    await api.request('PATCH', 'notifications/$id/read', body: {});
+  }
+
   Future<List<Conflict>> conflicts(String p, {String status = 'open'}) async =>
       decodeList(
           (await api.request('GET', 'patients/$p/conflicts',
