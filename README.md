@@ -42,7 +42,7 @@ that can't be double-confirmed.
 - **Runtime:** Node.js + Express 5
 - **Database:** PostgreSQL (via `pg`, raw parameterized SQL)
 - **Auth:** bcrypt (password hashing) + jsonwebtoken (JWT)
-- **Planned client:** Flutter mobile app
+- **Client:** Flutter Android/iOS/web app in `mobile` (see platform verification notes there)
 
 ## Architecture
 
@@ -180,12 +180,25 @@ retired. See [database/README.md](database/README.md) for migration rules and
 
 ## Project status
 
-Stages 1 and 2 are committed: backend reliability, medicine lifecycle management,
-caregiver revocation and automatic Level 1 reconciliation. Stage 3 adds versioned
-migrations, database integrity constraints, automated CI and API documentation.
-The Flutter client, notifications, background jobs, live/offline sync and
-deployment remain in the delivery plan. See [PROGRESS.md](PROGRESS.md) for stage
-status, verification and manual commit checkpoints.
+Stages 1-3 are committed: backend reliability, medicine lifecycle management,
+caregiver revocation, reconciliation, migrations, integrity constraints and CI.
+Stage 4 adds the Flutter core app and browser API integration. Notifications,
+background jobs, live/offline sync and deployment remain in the delivery plan.
+See [PROGRESS.md](PROGRESS.md) for verification and manual commit checkpoints.
+
+### Run the Flutter client
+
+With the backend running on port 3000, open another terminal:
+
+```powershell
+cd mobile
+flutter pub get --enforce-lockfile
+flutter run -d chrome --web-port=5173 --dart-define=API_BASE_URL=http://localhost:3000
+```
+
+See [mobile/README.md](mobile/README.md) for Android, iOS, secure sessions,
+connection configuration, tests and platform limitations. Browser sessions end
+when the page is refreshed. The app uses the real API; it contains no demo mode.
 
 ### Permissions
 

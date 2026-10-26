@@ -1,0 +1,19 @@
+{
+  "name": "MediSync",
+  "short_name": "MediSync",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f5f5ef",
+  "theme_color": "#126b5e",
+  "description": "Shared medication coordination for patients and caregivers.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

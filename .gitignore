@@ -4,3 +4,6 @@ node_modules/
 !.env.example
 tmp/
 coverage/
+*.jks
+*.keystore
+key.properties

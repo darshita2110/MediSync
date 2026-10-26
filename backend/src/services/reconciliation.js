@@ -31,9 +31,10 @@ function findFindings(items, today) {
       const differences = ['dose_amount', 'frequency', 'strength'].filter(field =>
         normalize(left[field]) && normalize(right[field]) && normalize(left[field]) !== normalize(right[field]));
       if (sameBrand && differences.length) {
+        const labels = { dose_amount: 'dose', frequency: 'frequency', strength: 'strength' };
         findings.push({ kind: 'different_instructions', level: 1, item_a_id: itemA, item_b_id: itemB,
-          description: `${context} have different recorded ${differences.join(', ')}: ` +
-            differences.map(field => `${field}: "${left[field]}" / "${right[field]}"`).join('; ') +
+          description: `${context} have different recorded ${differences.map(field => labels[field]).join(', ')}: ` +
+            differences.map(field => `${labels[field]}: "${left[field]}" / "${right[field]}"`).join('; ') +
             '. Please ask the prescriber to clarify the instructions.' });
       }
     }

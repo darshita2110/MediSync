@@ -77,6 +77,10 @@ async function listDoses(req, res) {
   const helper = req.patientRole === 'helper';
   const result = await db.query(
     `SELECT de.id, de.scheduled_for, de.status, de.confirmed_at, de.confirmed_by,
+            (de.status = 'pending' AND pi.status = 'active' AND s.is_active
+             AND (de.scheduled_for AT TIME ZONE p.timezone)::date >= GREATEST(pi.start_date, s.start_date)
+             AND (pi.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= pi.end_date)
+             AND (s.end_date IS NULL OR (de.scheduled_for AT TIME ZONE p.timezone)::date <= s.end_date)) AS is_actionable,
             u.name AS confirmed_by_name, pi.raw_text AS medicine, pi.brand_name, pi.dose_amount
      FROM dose_events de JOIN patients p ON p.id = de.patient_id
      JOIN schedules s ON s.id = de.schedule_id AND s.patient_id = de.patient_id

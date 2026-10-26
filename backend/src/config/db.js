@@ -1,4 +1,7 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+// A PostgreSQL DATE is a calendar date, not an instant in the server timezone.
+// Keep it as YYYY-MM-DD so mobile/web clients never shift it across midnight.
+types.setTypeParser(1082, value => value);
 const { quoteSchema } = require('../db/migrations');
 
 const schema = process.env.DATABASE_SCHEMA;

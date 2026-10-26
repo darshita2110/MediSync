@@ -18,6 +18,7 @@ process.env.DATABASE_URL = connectionString;
 process.env.PGOPTIONS = `-c search_path=${schema}`;
 process.env.DATABASE_SCHEMA = schema;
 process.env.JWT_SECRET = 'medisync-integration-tests-only-secret';
+process.env.ALLOWED_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173';
 const admin = new Pool({ connectionString, connectionTimeoutMillis: 5000 });
 let db, server, base, owner, helper, viewer, family, outsider, patient, today;
 
@@ -434,4 +435,40 @@ test('overlapping schedules are rejected concurrently, and deactivation preserve
   const remaining = (await db.query('SELECT status FROM dose_events WHERE schedule_id = $1', [s.id])).rows;
   assert.deepEqual(remaining, [{ status: 'taken' }]);
   assert.equal((await api('POST', `/api/patients/${p.id}/doses/generate`, { days_ahead: 1 })).body.doses_created, 0);
+});
+
+test('browser preflights allow only configured origins and still require authentication for data', async () => {
+  const preflight = await fetch(base + '/api/patients', { method: 'OPTIONS', headers: {
+    Origin: 'http://localhost:5173', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type',
+  } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+  const denied = await fetch(base + '/api/patients', { headers: { Origin: 'https://untrusted.example', Authorization: `Bearer ${owner.token}` } });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  const anonymous = await fetch(base + '/api/patients', { headers: { Origin: 'http://localhost:5173' } });
+  assert.equal(anonymous.status, 401);
+});
+
+test('calendar dates are returned as YYYY-MM-DD rather than timezone-dependent instants', async () => {
+  const p = await api('POST', '/api/patients', { full_name: 'Calendar test', date_of_birth: '1958-03-15' });
+  assert.equal(p.body.patient.date_of_birth, '1958-03-15');
+  const result = await api('POST', `/api/patients/${p.body.patient.id}/prescriptions`, {
+    visit_date: '2026-10-25', items: [{ raw_text: 'Calendar medicine', start_date: '2026-10-25', end_date: '2026-11-01' }],
+  });
+  assert.equal(result.body.prescription.visit_date, '2026-10-25');
+  assert.equal(result.body.prescription.items[0].start_date, '2026-10-25');
+  assert.equal(result.body.prescription.items[0].end_date, '2026-11-01');
+});
+
+test('timeline marks inactive historical pending doses as ineligible', async () => {
+  const p = await newPatient();
+  const item = await medicine(p.id);
+  const s = await schedule(item, { time_of_day: '00:00' }, p.id);
+  await api('POST', `/api/patients/${p.id}/doses/generate`, { days_ahead: 0 });
+  let list = await api('GET', `/api/patients/${p.id}/doses?from=${today}&to=${today}`);
+  assert.equal(list.body.doses[0].is_actionable, true);
+  await api('PATCH', `/api/patients/${p.id}/schedules/${s.id}`, { is_active: false });
+  list = await api('GET', `/api/patients/${p.id}/doses?from=${today}&to=${today}`);
+  assert.equal(list.body.doses[0].is_actionable, false);
 });

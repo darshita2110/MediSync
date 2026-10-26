@@ -23,7 +23,8 @@ async function listConflicts(req, res) {
      LEFT JOIN prescribers dbb ON dbb.id = prb.prescriber_id AND dbb.patient_id = c.patient_id
      WHERE c.patient_id = $1 AND ($2::text IS NULL OR c.status = $2::conflict_status)
      ORDER BY c.created_at DESC, c.id`, [req.params.patientId, status === 'all' ? null : status]);
-  return res.json({ conflicts: result.rows });
+  // Keep older persisted findings readable without changing their audit history.
+  return res.json({ conflicts: result.rows.map(row => ({ ...row, description: row.description.replace(/\bdose_amount\b/g, 'dose') })) });
 }
 
 async function updateConflict(req, res) {

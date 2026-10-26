@@ -7,8 +7,8 @@ commits manually. Publishing to a remote and deploying are separate actions.
 | --- | --- | --- |
 | 1 | Backend reliability: API tests, role boundaries, patient isolation, validation, patient-local scheduling | Committed in 37e9e4b |
 | 2 | Medicine lifecycle, caregiver revocation, automatic and complete Level 1 reconciliation | Committed in 37e9e4b |
-| 3 | Incremental migrations, CI, repeatable development and API documentation | Verified; ready for manual commit |
-| 4 | Flutter app: authentication, patients, medicines, prescriptions, caregivers and dose timeline | Pending |
+| 3 | Incremental migrations, CI, repeatable development and API documentation | Committed in 948c29b |
+| 4 | Flutter app: authentication, patients, medicines, prescriptions, caregivers and dose timeline | Verified; ready for manual commit |
 | 5 | Actionable notifications, background generation, escalation and family alerts | Pending |
 | 6 | Live updates and persistent offline dose queue with first-confirmation-wins handling | Pending |
 | 7 | Curated medicine mapping with explicit uncertainty and higher conflict levels | Pending |
@@ -49,8 +49,10 @@ Git signing is enabled. The user handles commits manually.
 Stages 1 and 2 were committed together in `37e9e4b` and the working tree was
 clean when stage 3 began. The previous staging instructions are superseded.
 
-Stage 3 suggested commit message: `build: add safe database migrations and backend CI`.
-Next implementation stage after that checkpoint: Flutter app.
+Stage 3 was committed as `948c29b` during stage 4 development.
+Stage 4 suggested commit message: `feat: add Flutter care coordination app`.
+Next implementation stage after that checkpoint: notifications, background
+dose generation, reminder escalation and family alerts.
 
 ## Stage 3 verification - 2026-10-25
 
@@ -69,3 +71,34 @@ Next implementation stage after that checkpoint: Flutter app.
   run during this stage; its result is available after a commit is pushed.
 - Setup and API contract documented in `README.md`, `database/README.md` and
   `Docs/API.md`.
+
+## Stage 4 verification - 2026-10-25
+
+- Added the Flutter Android/iOS/web client, API adapter, mobile secure-session
+  storage, browser memory sessions and role-specific care screens.
+- Implemented patients, dose timelines and confirmations, doctors/visits,
+  multi-medicine prescriptions, schedules, medicine lifecycle/replacements,
+  conflict review/history and caregiver invitations/consent/revocation.
+- Flutter analysis is clean and all 19 tests passed (11 API/session/model tests
+  and 8 widget workflows). Checked narrow layouts at enlarged text size,
+  expired-session route removal, preservation of a winning confirmation, and
+  partial prescription/schedule saves.
+- Backend checks passed: 35 JavaScript files checked, 15 unit tests and 45
+  PostgreSQL integration tests. Added exact-origin browser CORS, calendar DATE
+  serialization, dose eligibility and readable review labels.
+- Real Dart HTTP client smoke test passed against the Node/PostgreSQL API in an
+  isolated schema, including invitations, consent and duplicate confirmation.
+- Browser QA passed on desktop and at a 390-pixel phone width: sign-in,
+  patient navigation, timeline, review, people, visits and prescription entry.
+  Screenshots were visually inspected; no browser JavaScript errors occurred.
+- Flutter web profile build and Android debug APK build passed. APK:
+  `mobile/build/app/outputs/flutter-apk/app-debug.apk` (ignored by Git).
+- iOS was scaffolded but not built on Windows. No physical Android device was
+  connected; native secure-store/device behavior remains a release-stage check.
+- Temporary QA API/schema and web preview were stopped after verification.
+  Existing development patient data was not used for QA or changed.
+- Flutter CI added for formatting, analysis, tests, actual client/API smoke
+  verification and Android/web compilation. Hosted CI has not run in this stage.
+
+Stage 4 is ready for the user's manual commit. Notifications, server jobs and
+alerts are not included in this checkpoint; they are the next stage.

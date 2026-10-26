@@ -1,11 +1,13 @@
 const express = require('express');
 const db = require('./config/db');
+const { cors } = require('./middleware/cors.middleware');
 
 const app = express();
 app.disable('x-powered-by');
+app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+app.use(cors());
 app.use(express.json({ limit: '100kb' }));
 app.use((req, res, next) => {
-  res.set('Cache-Control', 'no-store');
   if (req.body === undefined) req.body = {};
   if (req.body === null || typeof req.body !== 'object' || Array.isArray(req.body)) {
     return res.status(400).json({ error: 'Request body must be a JSON object' });

@@ -11,6 +11,12 @@ Nullable optional text and dates can be omitted or sent as `null`.
 All other endpoints require `Authorization: Bearer <token>`.
 JWTs expire after seven days. Login again after a `401` response.
 
+Browser clients must use an allowed origin. Development allows localhost:5173
+and 127.0.0.1:5173. Configure `ALLOWED_ORIGINS` with exact comma-separated HTTP(S)
+origins for other deployments; production allows none by default. Preflight
+requests are public but do not grant access to patient data. Native mobile
+requests still require bearer authentication and do not require CORS headers.
+
 Errors use `{ "error": "message" }` and these status codes:
 
 | Status | Meaning |
@@ -158,6 +164,10 @@ Replace IDs and dates with actual values returned by earlier requests.
    Helpers always receive today, regardless of a requested range.
 
 8. Confirm with `PATCH /api/patients/{patientId}/doses/{doseId}`:
+
+   Each timeline dose includes `is_actionable`. Show confirmation controls only
+   when it is true and the caller's role can confirm. Inactive historical pending
+   doses stay visible for history, with no confirmation action.
 
    ```json
    { "status": "taken" }

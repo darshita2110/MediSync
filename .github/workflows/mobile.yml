@@ -1,0 +1,77 @@
+name: Flutter checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: medisync_client_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d medisync_client_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/medisync_client_ci
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.27.4
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: dart format --output=none --set-exit-if-changed lib test tool
+      - run: flutter analyze --no-pub
+      - run: flutter test --no-pub
+      - run: npm ci --prefix ../backend
+      - name: Verify the actual Dart client against an isolated PostgreSQL API
+        shell: bash
+        run: |
+          node ../backend/test/support/client-server.js &
+          client_pid=$!
+          trap 'kill "$client_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if curl --silent --fail http://127.0.0.1:31328/api/__test_scope > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          dart run tool/api_smoke.dart
+      - name: Compile web (build-only HTTPS placeholder)
+        run: flutter build web --pwa-strategy=none --dart-define=API_BASE_URL=https://example.invalid
+      - name: Compile Android development APK
+        run: flutter build apk --debug
