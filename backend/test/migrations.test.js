@@ -11,7 +11,7 @@ test('migration targets reject system schemas and SQL fragments', () => {
 
 test('migration files are ordered, immutable inputs with complete SHA-256 checksums', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(m => m.version), ['001', '002', '003']);
+  assert.deepEqual(migrations.map(m => m.version), ['001', '002', '003', '004']);
   assert.ok(migrations.every(m => /^[a-f0-9]{64}$/.test(m.checksum)));
   assert.ok(migrations.every(m => !/DROP TABLE/i.test(m.sql)));
 });

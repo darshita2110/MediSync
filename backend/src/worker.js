@@ -2,6 +2,7 @@ require('dotenv').config({ quiet: true });
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL must be configured');
 const db = require('./config/db');
 const { runReminderTick } = require('./services/reminders');
+const { runPushTick } = require('./services/push');
 const interval = Number(process.env.REMINDER_INTERVAL_MS || 30000);
 if (!Number.isInteger(interval) || interval < 1000 || interval > 60000) {
   throw new Error('REMINDER_INTERVAL_MS must be between 1000 and 60000');
@@ -11,6 +12,8 @@ async function tick() {
   timer = null;
   try { await runReminderTick(); }
   catch (error) { console.error('Reminder tick failed:', error.code || error.name); }
+  try { await runPushTick({ shouldStop: () => stopping }); }
+  catch (error) { console.error('Push tick failed:', error.code || error.name); }
   finally {
     if (stopping) await db.pool.end();
     else timer = setTimeout(tick, interval);

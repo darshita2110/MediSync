@@ -10,3 +10,6 @@ key.properties
 backend/credentials/
 **/*firebase-adminsdk*.json
 **/service-account*.json
+hs_err_pid*.log
+replay_pid*.log
+*.hprof

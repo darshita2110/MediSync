@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../models.dart';
 import '../session.dart';
+import '../push.dart';
+import 'push_settings_page.dart';
 import 'basic_forms.dart';
 import 'alerts_page.dart';
 import 'patient_page.dart';
 import 'shared.dart';
 
 class PatientsPage extends StatefulWidget {
-  const PatientsPage({super.key, required this.controller});
+  const PatientsPage({super.key, required this.controller, this.push});
   final SessionController controller;
+  final PushController? push;
   @override
   State<PatientsPage> createState() => _PatientsPageState();
 }
@@ -75,6 +78,15 @@ class _PatientsPageState extends State<PatientsPage> {
           title:
               const Padding(padding: EdgeInsets.only(left: 4), child: Brand()),
           actions: [
+            if (widget.push != null)
+              IconButton(
+                  tooltip: 'Phone notifications',
+                  onPressed: () => Navigator.push<void>(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              PushSettingsPage(push: widget.push!))),
+                  icon: const Icon(Icons.notifications_active_outlined)),
             IconButton(
                 tooltip: 'Care alerts',
                 onPressed: () => Navigator.push<void>(context,

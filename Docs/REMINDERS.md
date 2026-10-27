@@ -1,9 +1,9 @@
-# Reminders: stage 5a
+# Reminders and Android push
 
-This checkpoint implements server scheduling and the authenticated care inbox.
-Phone push notifications and lock-screen Taken/Snooze/Skip actions are the next
-checkpoint. No Firebase project, device token or cloud credential is configured;
-the API explicitly reports `push_configured: false`.
+Stage 5a implements server scheduling and the authenticated care inbox. Stage 5b
+adds the Android Firebase transport, device enrollment, notification review
+links and durable delivery retries. Phone delivery still needs server credentials
+and physical-device verification. See PROGRESS.md for actual verification status.
 
 ## Run locally
 
@@ -34,7 +34,7 @@ random disposable schemas; they never run the worker on development patients.
 In the Flutter app, open the bell from the care-space list or patient screen.
 The inbox refreshes on opening, on resume and every 30 seconds while visible.
 Pull to refresh or use the refresh button. An absent/stale worker heartbeat
-produces a visible delay warning. No alert appears on the phone lock screen yet.
+produces a visible delay warning. Phone alerts additionally require the stage 5b configuration and explicit device opt-in below.
 
 ## Timing and consistency
 
@@ -69,34 +69,140 @@ produces a visible delay warning. No alert appears on the phone lock screen yet.
   re-invitation cannot reveal old alerts. Inbox pages use a stable timestamp/ID
   cursor, 50 rows at a time. Read state is independent per recipient.
 
-This stage does not deliver push, queue offline confirmations, or synchronize
-every open patient screen live. Those remain explicit later checkpoints.
+The inbox works independently of phone push. Persistent offline confirmations
+and live updates across all patient screens remain a later checkpoint.
 
-## Next: Firebase setup and phone delivery
+## Android push: stage 5b
 
-1. Create a development project in the [Firebase console](https://console.firebase.google.com/).
-   Register an Android app with package name `com.medisync.medisync`, matching
-   `mobile/android/app/build.gradle`. Download its `google-services.json` to
-   `mobile/android/app/google-services.json`. This client configuration is not
-   a server service-account key.
-2. Keep the Firebase project ID available. The next implementation checkpoint
-   will select SDK versions compatible with the pinned Flutter SDK, configure
-   the client and add explicit notification permission/device enrollment.
-   The current app does not initialize Firebase just because the file exists.
-3. Configure server credentials through Application Default Credentials in the
-   deployment environment. If a local service-account JSON key is needed,
-   keep it outside Git (for example in ignored `backend/credentials/`) and
-   use its path as an environment variable. Never paste the private key into
-   chat or place it in Flutter assets. No server Firebase SDK is installed yet.
-4. For iOS, register the same bundle identifier, configure APNs credentials and
-   Xcode capabilities on a Mac, then test on a physical iPhone. This has not been
-   done on the current Windows machine.
-5. Implement the durable per-device delivery queue with retries, token refresh,
-   account-switch cleanup and generic lock-screen text; connect the three
-   actions to the same guarded API. Prove foreground/background delivery,
-   action races, revoked access, denied permission and phone-off family alerts
-   on real devices before marking stage 5 complete.
+The Android app is registered in Firebase project `medisync-4aec5`, package
+`com.medisync.medisync`. Its `mobile/android/app/google-services.json` is client
+configuration and contains public app identifiers. Firebase initializes only on
+Android; the web care inbox continues to work without Firebase initialization.
+iOS push remains pending an Apple app registration, APNs setup and a Mac/device.
+
+### Server credentials
+
+The Android configuration file cannot authenticate the server. On the Firebase
+console, open **Project settings > Service accounts > Generate new private key**.
+Save the downloaded key in `backend/credentials/` (for example as
+`firebase-service-account.json`). You can retain Firebase's generated filename;
+set `GOOGLE_APPLICATION_CREDENTIALS` to the actual file path.
+The entire credentials directory and common service-account key filenames are
+ignored by Git. Never add this private key to Flutter assets or paste it into
+chat. For deployment, prefer managed Application Default Credentials when the
+hosting platform supports them.
+
+Set these fields in the existing `backend/.env`, preserving database/JWT values:
+
+```dotenv
+PUSH_ENABLED=true
+FIREBASE_PROJECT_ID=medisync-4aec5
+GOOGLE_APPLICATION_CREDENTIALS=D:/apps/medisync/backend/credentials/firebase-service-account.json
+```
+
+From `backend`, run:
+
+```powershell
+npm run db:migrate
+npm run push:check
+```
+
+`push:check` validates a local service-account project match and obtains a
+short-lived Google access token. It never prints the token or private key and
+sends no notification. Authentication success does not prove FCM send permission
+or phone receipt. The FCM HTTP v1 API must be enabled for the Firebase project.
+Restart the API and `npm run worker` after changing environment settings.
+`PUSH_ENABLED=false` keeps the in-app inbox working without any cloud calls.
+
+### Phone opt-in and actions
+
+Install a fresh debug APK on an Android phone with Google Play services. Use
+**Phone notifications** from the care-space list, then **Enable notifications**
+and grant Android permission. Permission is requested only from this explicit
+screen. A device registers against the signed-in account using a random
+installation UUID, private installation secret and account binding UUID.
+Firebase token refresh re-registers the device. An enrollment error can be
+retried from this screen. A token collision triggers one FCM token refresh and
+one guarded enrollment retry; other failures remain visible for manual retry.
+
+Reminders arrive as high-priority Android data messages. The app renders one
+local notification with generic text and Taken/Snooze/Skip buttons. Those buttons
+open the authenticated dose-review screen. The caregiver reviews the medicine,
+patient and latest saved state before using its guarded action controls. A stale
+notification cannot overwrite a saved confirmation or bypass revoked access.
+No medical details or session/installation secrets are sent through FCM.
+
+Sign-out first disables the local binding and clears displayed notifications,
+then attempts server unregistration. Incoming payloads must match an enabled
+binding and the locally saved account. Offline cleanup cannot expose another
+account's medicine details; old bindings are rejected locally and the server
+checks current device ownership before sending. Background receipt records are
+separate from the enrollment record and expired records are pruned on sign-in.
+
+### Durable delivery and limits
+
+- Reminder decisions and per-device delivery jobs commit in the same database
+  transaction. Only currently enrolled devices receive jobs; registration does
+  not replay the historical inbox.
+- Multiple workers claim jobs with database locks and expiring leases. Workers
+  retry at most six times, with exponential backoff and bounded Retry-After
+  support. Invalid/unregistered tokens and permanent FCM errors fail the job;
+  unregistered tokens deactivate the matching device binding.
+- Before every send, the worker checks accepted membership, role, local helper
+  date, read state, dose/schedule/course eligibility, snooze and device binding.
+  Obsolete deliveries are cancelled. Reminders expire after 15 minutes or at
+  the dose's original +45 deadline; family alerts expire after one hour.
+- FCM acceptance is stored as `accepted`, never labelled proof of phone delivery.
+  A crash after FCM acceptance can cause a retried send. Stable notification IDs,
+  local receipt records and Android `onlyAlertOnce` suppress duplicate cards.
+- Phone delivery depends on connectivity, permission, Google Play services and
+  OS background restrictions. Force-stopping the app can prevent delivery until
+  it is opened again. Server-side missed detection and family inbox alerts do
+  not depend on the patient's phone being online, but family phones also need
+  their own opt-in, permission and connectivity to receive push.
+- `delivery.push_configured` means the server's explicit enable flag/project ID
+  are set. It does not certify credentials, worker availability or a particular
+  phone's permission/token. Inspect the setup screen, worker heartbeat and
+  device test results together.
+
+Before marking stage 5 complete, verify due/+15/+30 reminders, snooze, +45 family
+alerts, foreground/background/terminated delivery, account switching, sign-out,
+permission denial, token refresh, expired/revoked access and phone-off behavior
+on physical devices. Live patient-screen sync and offline confirmations remain
+stage 6; always-on deployment and signed releases remain stage 8.
 
 Firebase references: [Flutter setup](https://firebase.google.com/docs/flutter/setup),
-[Cloud Messaging setup](https://firebase.google.com/docs/cloud-messaging/flutter/get-started),
-and [server credentials](https://firebase.google.com/docs/admin/setup).
+[background message handling](https://firebase.google.com/docs/cloud-messaging/flutter/receive-messages),
+[server credentials and FCM HTTP v1](https://firebase.google.com/docs/cloud-messaging/send/v1-api).
+
+
+### Physical-device QA without development patient data
+
+After `npm run push:check` passes, start a fresh disposable API from `backend`:
+
+```powershell
+$env:MEDISYNC_DEVICE_QA="true"
+node test/support/client-server.js
+```
+
+This creates a random `medisync_test_*` schema on port 31328. The special device
+QA mode starts the reminder/push worker only inside that schema. Normal client
+smoke tests force cloud push off; device QA additionally requires the explicit
+mode flag and `PUSH_ENABLED=true`. Create synthetic accounts/patients in this
+server for phone testing. Do not run the automated smoke fixture with device
+QA mode enabled, since its device token is deliberately synthetic.
+
+Connect the phone by USB with debugging enabled, then use the Android SDK's adb:
+
+```powershell
+adb reverse tcp:31328 tcp:31328
+cd ../mobile
+flutter run -d YOUR_DEVICE_ID --dart-define=API_BASE_URL=http://127.0.0.1:31328
+```
+
+The default Android API address `10.0.2.2` is for an emulator; it does not connect
+a physical phone to this PC. Keep the USB reverse connection and QA server
+running, opt in on each test phone, and add synthetic doses near the current
+patient-local time. Exit the QA server with Ctrl+C to remove its schema and
+synthetic accounts/device tokens. Reinstalling/restarting a phone with a removed
+QA schema requires creating a fresh QA account and re-enrolling notifications.

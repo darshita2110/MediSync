@@ -159,11 +159,31 @@ guarded backend as the timeline. Missed doses can be confirmed late; a saved
 caregiver confirmation cannot be overwritten. Snooze delays the next reminder
 10 minutes without moving the original 45-minute missed deadline.
 
-The inbox refreshes on resume and every 30 seconds while visible. Its current
-implementation displays in-app alerts only; no phone push or lock-screen actions
-are configured. Run both the backend API and `npm run worker` after applying
+The inbox refreshes on resume and every 30 seconds while visible. The original stage 5a checkpoint displayed in-app alerts only; optional Android
+push is added in stage 5b below. Run both the backend API and `npm run worker` after applying
 migration 003. A stale/absent worker heartbeat is visible in the inbox. Real-time
 patient-screen updates and persistent offline confirmations remain stage 6.
 
 See [Docs/REMINDERS.md](../Docs/REMINDERS.md) for timing rules, worker operation
 and the next Firebase setup checkpoint.
+
+
+## Stage 5b: Android Firebase delivery
+
+The client is registered in Firebase project `medisync-4aec5` with Android package
+`com.medisync.medisync`. The native Google Services file configures the Android
+Firebase default app; no web/iOS Firebase options are initialized. The app keeps
+working when Android push cannot initialize. Android minimum SDK is now 23;
+Firebase's Apple dependency raises the scaffold's iOS deployment target to 13.
+
+Use **Phone notifications** on the care-space list for explicit permission and
+enrollment. Token refresh is registered automatically. Generic notifications
+contain Taken/Snooze/Skip links that open a dose review before recording a
+change. Server JWT/role checks, confirmation conflict handling and patient-local
+helper limits apply to these actions. Sign-out disables the local binding first.
+
+The server requires a separate private credential file and explicit enable flag.
+The Android Google Services file contains public client identifiers; it cannot
+send server messages. See [REMINDERS.md](../Docs/REMINDERS.md) for exact setup,
+Android background restrictions and the outstanding physical-phone checks.
+The private service-account key must never be copied into this app or committed.

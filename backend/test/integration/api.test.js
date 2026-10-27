@@ -14,6 +14,7 @@ if (!process.env.TEST_DATABASE_URL && !['localhost', '127.0.0.1', '[::1]'].inclu
   throw new Error('Remote databases require an explicit TEST_DATABASE_URL');
 }
 const schema = `medisync_test_${randomUUID().replaceAll('-', '')}`;
+process.env.PUSH_ENABLED = 'false';
 process.env.DATABASE_URL = connectionString;
 process.env.PGOPTIONS = `-c search_path=${schema}`;
 process.env.DATABASE_SCHEMA = schema;
@@ -653,4 +654,97 @@ test('helper inbox excludes previous local dates and confirmation wins against a
   const count = (await alertsFor(f.dose.id)).length;
   await processPatient(f.patient.id, f.at(50));
   assert.equal((await alertsFor(f.dose.id)).length, count);
+});
+
+
+async function pushDevice(user = owner, fields = {}) {
+  const device = { id: randomUUID(), binding_id: randomUUID(), installation_secret: 'b'.repeat(64),
+    platform: 'android', token: `fixture_${randomUUID()}`, ...fields };
+  const result = await api('PUT', `/api/notifications/devices/${device.id}`, device, user.token);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.device.binding_id, device.binding_id);
+  assert.ok(!JSON.stringify(result.body).includes(device.installation_secret));
+  assert.ok(!JSON.stringify(result.body).includes(device.token));
+  return device;
+}
+async function deliveriesFor(id, deviceId) {
+  return (await db.query(`SELECT q.* FROM push_deliveries q JOIN care_notifications n ON n.id = q.notification_id
+    WHERE n.dose_id = $1 AND q.device_id = $2 ORDER BY q.available_at`, [id, deviceId])).rows;
+}
+
+test('device enrollment proves installation ownership and isolates account-switch cleanup', async () => {
+  const d = await pushDevice();
+  const path = `/api/notifications/devices/${d.id}`;
+  assert.equal((await api('PUT', path, { ...d, installation_secret: 'a'.repeat(64) }, outsider.token)).status, 403);
+  assert.equal((await api('PUT', path, { ...d, binding_id: randomUUID() }, null)).status, 401);
+  assert.equal((await api('PUT', path, { ...d, platform: 'ios' })).status, 400);
+  assert.equal((await api('PUT', `/api/notifications/devices/${randomUUID()}`, { ...d, binding_id: randomUUID() })).status, 409);
+  const binding = randomUUID();
+  assert.equal((await api('PUT', path, { ...d, binding_id: binding }, outsider.token)).status, 200);
+  assert.equal((await api('DELETE', path, d)).status, 200);
+  assert.equal((await db.query('SELECT active FROM push_devices WHERE id = $1', [d.id])).rows[0].active, true);
+  assert.equal((await api('DELETE', path, { ...d, binding_id: binding }, outsider.token)).status, 200);
+  assert.equal((await db.query('SELECT active FROM push_devices WHERE id = $1', [d.id])).rows[0].active, false);
+});
+
+test('durable push outbox is atomic and parallel dispatchers claim each job once', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const { runPushTick } = require('../../src/services/push');
+  const d = await pushDevice();
+  const f = await reminderFixture();
+  await processPatient(f.patient.id, f.reference);
+  const rows = await deliveriesFor(f.dose.id, d.id);
+  assert.equal(rows.length, 1);
+  assert.equal((await runPushTick({ enabled: false })).disabled, true);
+  assert.equal((await deliveriesFor(f.dose.id, d.id))[0].attempts, 0);
+  const sent = [];
+  const send = async job => { sent.push(job); };
+  await Promise.all([runPushTick({ enabled: true, send, reference: f.reference }), runPushTick({ enabled: true, send, reference: f.reference })]);
+  assert.equal(sent.filter(j => j.token === d.token && j.notification_id === rows[0].notification_id).length, 1);
+  assert.equal((await deliveriesFor(f.dose.id, d.id))[0].status, 'accepted');
+  const detail = await api('GET', `/api/notifications/${rows[0].notification_id}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.notification.dose_id, f.dose.id);
+  assert.equal((await api('GET', `/api/notifications/${rows[0].notification_id}`, undefined, outsider.token)).status, 404);
+});
+
+test('push retries are durable, expired leases recover and unregistered tokens deactivate', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const { runPushTick } = require('../../src/services/push');
+  const d = await pushDevice();
+  const f = await reminderFixture();
+  await processPatient(f.patient.id, f.reference);
+  await runPushTick({ enabled: true, reference: f.reference, send: async () => { throw Object.assign(new Error('Synthetic'), { code: 'UNAVAILABLE' }); } });
+  let row = (await deliveriesFor(f.dose.id, d.id))[0];
+  assert.equal(row.status, 'pending'); assert.equal(row.attempts, 1); assert.equal(row.last_error, 'UNAVAILABLE');
+  assert.equal((await runPushTick({ enabled: true, reference: f.at(0.5), send: async () => {} })).accepted, 0);
+  await db.query(`UPDATE push_deliveries SET status = 'sending', lease_id = $2, lease_until = $3
+    WHERE id = $1`, [row.id, randomUUID(), f.at(-1).toISOString()]);
+  await runPushTick({ enabled: true, reference: f.at(1), send: async job => {
+    if (job.token === d.token) throw Object.assign(new Error('Synthetic'), { code: 'UNREGISTERED' });
+  } });
+  row = (await deliveriesFor(f.dose.id, d.id))[0];
+  assert.equal(row.status, 'failed'); assert.equal(row.attempts, 2);
+  assert.equal((await db.query('SELECT active FROM push_devices WHERE id = $1', [d.id])).rows[0].active, false);
+});
+
+test('queued push rechecks read state, snooze, confirmation, revocation and current binding', async () => {
+  const { processPatient } = require('../../src/services/reminders');
+  const { runPushTick } = require('../../src/services/push');
+  const { actOnDose } = require('../../src/services/dose-actions');
+  for (const reason of ['read', 'snooze', 'confirm', 'revoke', 'binding', 'expired']) {
+    const d = await pushDevice(family);
+    const f = await reminderFixture();
+    await processPatient(f.patient.id, f.reference);
+    const row = (await deliveriesFor(f.dose.id, d.id))[0];
+    if (reason === 'read') await api('PATCH', `/api/notifications/${row.notification_id}/read`, {}, family.token);
+    if (reason === 'snooze') await actOnDose(f.patient.id, f.dose.id, owner.user.id, 'snooze', f.at(1));
+    if (reason === 'confirm') await api('PATCH', `/api/patients/${f.patient.id}/doses/${f.dose.id}`, { status: 'taken' });
+    if (reason === 'revoke') await db.query('DELETE FROM patient_access WHERE patient_id = $1 AND user_id = $2', [f.patient.id, family.user.id]);
+    if (reason === 'binding') await pushDevice(family, { ...d, binding_id: randomUUID(), token: `refreshed_${randomUUID()}` });
+    const sent = [];
+    await runPushTick({ enabled: true, reference: reason === 'expired' ? f.at(16) : f.at(1), send: async job => { sent.push(job); } });
+    assert.ok(!sent.some(j => j.token === d.token && j.notification_id === row.notification_id), reason);
+    assert.equal((await deliveriesFor(f.dose.id, d.id))[0].status, 'cancelled', reason);
+  }
 });

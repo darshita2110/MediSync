@@ -70,7 +70,7 @@ transactions.
 
 ## Data model
 
-Fourteen application tables, plus a `schema_migrations` ledger:
+Sixteen application tables, plus a `schema_migrations` ledger:
 
 | Table                | Purpose                                             |
 |----------------------|-----------------------------------------------------|
@@ -88,6 +88,8 @@ Fourteen application tables, plus a `schema_migrations` ledger:
 | `care_notifications` | per-user reminder and family-alert inbox             |
 | `patient_worker_state` | daily reconciliation checkpoint                    |
 | `reminder_worker_status` | background worker heartbeat                      |
+| `push_devices` | authenticated Android installations and account bindings |
+| `push_deliveries` | durable per-device delivery leases, retries and FCM acceptance |
 
 ## API overview
 
@@ -191,7 +193,10 @@ Stages 1-3 are committed: backend reliability, medicine lifecycle management,
 caregiver revocation, reconciliation, migrations, integrity constraints and CI.
 Stage 4 is committed and includes the Flutter core app and browser API integration.
 Stage 5a adds the server reminder worker, shared snoozing, escalation and care
-inbox. Firebase push/action buttons, live/offline sync and deployment remain.
+inbox. Stage 5b adds Android Firebase configuration, device enrollment, notification
+review actions and durable delivery. Server OAuth authentication is verified; physical-phone
+verification remains before stage 5 is complete; live/offline sync and deployment
+are later stages.
 See [Docs/REMINDERS.md](Docs/REMINDERS.md) to run the worker and prepare Firebase.
 See [PROGRESS.md](PROGRESS.md) for verification and manual commit checkpoints.
 

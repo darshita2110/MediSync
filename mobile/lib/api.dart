@@ -160,6 +160,14 @@ class Repository {
   Future<AlertPage> alerts({String? before}) async =>
       AlertPage.fromJson(await api.request('GET', 'notifications',
           query: before == null ? null : {'before': before}));
+  Future<CareAlert> alert(String id) async => CareAlert.fromJson(
+      (await api.request('GET', 'notifications/$id'))['notification'] as Json);
+  Future<Json> registerPush(String id, Json body) =>
+      api.request('PUT', 'notifications/devices/$id', body: body);
+  Future<void> unregisterPush(String id, Json body) async {
+    await api.request('DELETE', 'notifications/devices/$id', body: body);
+  }
+
   Future<void> readAlert(String id) async {
     await api.request('PATCH', 'notifications/$id/read', body: {});
   }

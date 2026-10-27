@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api.dart';
 import 'models.dart';
+import 'notification_contract.dart';
 
 abstract interface class SessionStore {
   Future<Session?> read();
@@ -50,11 +51,12 @@ class SecureSessionStore implements SessionStore {
 }
 
 class SessionController extends ChangeNotifier {
-  SessionController(this.repository, this.store) {
+  SessionController(this.repository, this.store, {this.notifications}) {
     repository.api.onUnauthorized = _expire;
   }
   final Repository repository;
   final SessionStore store;
+  final SessionNotifications? notifications;
   Session? session;
   bool initialized = false;
   String? message;
@@ -73,6 +75,9 @@ class SessionController extends ChangeNotifier {
       repository.api.token = session?.token;
     } catch (_) {
       message = 'Your saved session could not be opened. Please sign in again.';
+    }
+    if (session != null) {
+      unawaited(notifications?.onSignedIn(session!).catchError((Object _) {}));
     }
     initialized = true;
     notifyListeners();
@@ -94,10 +99,12 @@ class SessionController extends ChangeNotifier {
     message = null;
     revision++;
     notifyListeners();
+    unawaited(notifications?.onSignedIn(result).catchError((Object _) {}));
   }
 
   Future<void> signOut() async {
     try {
+      await notifications?.onSignedOut();
       await _storeOperation(store.clear);
     } catch (_) {
       throw const ApiException('Sign-out could not finish. Please try again.');
@@ -114,6 +121,7 @@ class SessionController extends ChangeNotifier {
 
   void _expire() {
     message = 'Your session has expired. Please sign in again.';
+    unawaited(notifications?.onSignedOut().catchError((Object _) {}));
     _reset();
     unawaited(_storeOperation(store.clear).catchError((Object _) {}));
   }

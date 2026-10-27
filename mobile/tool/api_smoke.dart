@@ -19,12 +19,23 @@ Future<void> main() async {
         'Refusing to create QA data in a normal API');
     final repo = Repository(api);
     final helper = Repository(helperApi);
+    const installation = '30000000-0000-4000-8000-000000000001';
+    const binding = '30000000-0000-4000-8000-000000000002';
+    final deviceBody = <String, dynamic>{
+      'binding_id': binding,
+      'installation_secret': 'a' * 64,
+      'platform': 'android',
+      'token': 'synthetic_fcm_token_smoke_123456789012345678901'
+    };
     const password = 'MediSync-qa-12345';
     final stamp = DateTime.now().microsecondsSinceEpoch;
     final email = 'qa-owner-$stamp@example.test';
     final helperEmail = 'qa-helper-$stamp@example.test';
     final ownerSession = await repo.signup('Priya (QA)', email, password);
     api.token = ownerSession.token;
+    final registration = await repo.registerPush(installation, deviceBody);
+    check((registration['device'] as Map<String, dynamic>)['active'] == true,
+        'Push device enrollment did not decode');
     helperApi.token =
         (await helper.signup('Helper (QA)', helperEmail, password)).token;
     final patient = await repo.createPatient({
@@ -112,6 +123,8 @@ Future<void> main() async {
         .firstWhere((a) => a.dose.medicine == 'Reminder fixture (QA)');
     check(alert.patient.id == patient.id && alert.dose.canSnooze,
         'Actionable reminder failed to decode');
+    check((await repo.alert(alert.id)).dose.id == alert.dose.id,
+        'Notification detail did not decode');
     await repo.readAlert(alert.id);
     check(
         (await repo.alerts()).alerts.firstWhere((a) => a.id == alert.id).isRead,
@@ -144,6 +157,7 @@ Future<void> main() async {
             .where((a) => a.dose.id == alert.dose.id)
             .every((a) => a.dose.status == 'taken'),
         'Late confirmation was not reflected in the inbox');
+    await repo.unregisterPush(installation, deviceBody);
     stdout.writeln(
         'PASS: real Dart client care workflows, reminder worker, inbox, read state, shared snooze, family escalation and late confirmation.');
     stdout.writeln('Synthetic browser QA login: $email / $password');

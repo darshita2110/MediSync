@@ -238,7 +238,7 @@ void main() {
     await tester.tap(find.byTooltip('Care alerts'));
     await tester.pumpAndSettle();
     expect(find.textContaining('not checked in recently'), findsOneWidget);
-    expect(find.textContaining('Phone notifications are not enabled'),
+    expect(find.textContaining('Reminders and family alerts, with'),
         findsOneWidget);
     await tester.ensureVisible(find.text('Snooze 10 min'));
     await tester.tap(find.text('Snooze 10 min'));

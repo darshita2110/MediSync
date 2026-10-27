@@ -10,16 +10,28 @@ if (!url || (!process.env.TEST_DATABASE_URL && !['localhost', '127.0.0.1', '[::1
   throw new Error('Use TEST_DATABASE_URL or a local DATABASE_URL for the isolated client server');
 }
 const schema = `medisync_test_${randomUUID().replaceAll('-', '')}`;
+const deviceQa = process.env.MEDISYNC_DEVICE_QA === 'true';
+process.env.PUSH_ENABLED = deviceQa && process.env.PUSH_ENABLED === 'true' ? 'true' : 'false';
 process.env.DATABASE_URL = url;
 process.env.DATABASE_SCHEMA = schema;
 process.env.JWT_SECRET = 'medisync-client-integration-synthetic-secret';
 process.env.ALLOWED_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173';
 const admin = new Pool({ connectionString: url, connectionTimeoutMillis: 5000 });
-let server, db, stopping = false;
+let server, db, stopping = false, timer, activeTick;
+async function deviceTick() {
+  activeTick = (async () => {
+    await require('../../src/services/reminders').runReminderTick();
+    await require('../../src/services/push').runPushTick({ shouldStop: () => stopping });
+  })().catch(err => console.error('Device QA worker failed:', err.code || err.name));
+  await activeTick;
+  if (!stopping) timer = setTimeout(deviceTick, 30000);
+}
 
 async function stop() {
   if (stopping) return;
   stopping = true;
+  clearTimeout(timer);
+  if (activeTick) await activeTick;
   if (server) {
     const closed = new Promise(resolve => server.close(resolve));
     server.closeAllConnections();
@@ -51,7 +63,10 @@ async function stop() {
     setImmediate(() => stop().catch(err => { console.error(err.message); process.exitCode = 1; }));
   });
   wrapper.use(require('../../src/app'));
-  server = wrapper.listen(31328, '127.0.0.1', () => console.log('Isolated client API ready: http://127.0.0.1:31328'));
+  server = wrapper.listen(31328, '127.0.0.1', () => {
+    console.log('Isolated client API ready: http://127.0.0.1:31328');
+    if (deviceQa) deviceTick();
+  });
   server.on('error', err => { console.error(err.message); process.exitCode = 1; stop().catch(cleanupError => console.error(cleanupError.message)); });
   process.once('SIGINT', () => { stop().catch(err => { console.error(err.message); process.exitCode = 1; }); });
   process.once('SIGTERM', () => { stop().catch(err => { console.error(err.message); process.exitCode = 1; }); });

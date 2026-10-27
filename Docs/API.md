@@ -200,7 +200,7 @@ a finding does not itself stop or alter a medicine.
 
 Repeated checks preserve dismissals. Open findings automatically resolve when
 their underlying recorded conflict disappears. `status=all` exposes history.
-The reminder worker also reconciles once per patient-local day. Phone push delivery is pending Firebase setup; the authenticated care inbox is implemented.
+The reminder worker also reconciles once per patient-local day. Android push delivery is optional after server credentials and device enrollment; the authenticated care inbox remains available independently.
 
 
 ## Reminders, snooze and care inbox
@@ -253,5 +253,42 @@ Alerts from a revoked membership remain hidden after re-invitation.
 
 See [REMINDERS.md](REMINDERS.md) for worker startup, outage/restart behavior and
 Firebase setup. The worker does not run inside the API process. A heartbeat
-older than three minutes (or absent) should display a delay warning. No Firebase
-transport or phone notification actions are connected at this checkpoint.
+older than three minutes (or absent) should display a delay warning. Android delivery uses FCM when explicitly configured; notification actions open an authenticated dose review before a guarded write.
+
+
+## Android push enrollment
+
+`PUT /api/notifications/devices/{installationId}` requires a bearer token and:
+
+```json
+{
+  "installation_secret": "64-lowercase-hex-characters-generated-on-the-phone",
+  "binding_id": "a-fresh-uuid-for-this-account-enrollment",
+  "platform": "android",
+  "token": "the-current-fcm-device-token"
+}
+```
+
+The installation UUID and private random secret persist in native secure
+storage. Re-registering an existing UUID requires the same secret. A changed
+account must use a fresh binding. A token already owned by another installation
+returns `409`; obtain a fresh FCM token before retrying. The response is
+`{ device: { id, binding_id, active }, push_configured }`; it never echoes tokens
+or installation secrets. Only a hash of the installation secret is stored.
+
+`DELETE /api/notifications/devices/{installationId}` takes
+`{ installation_secret, binding_id }`, scoped to the authenticated current owner
+and binding, and returns `{ disabled: true }` idempotently. A delayed cleanup
+from a previous account/binding cannot disable a new enrollment. Old pending
+and leased jobs are cancelled on a binding change or successful disable.
+
+`GET /api/notifications/{notificationId}` returns `{ notification: ... }` with
+the same fields and current-access checks as the inbox. It supports opening a
+notification review. Foreign, revoked and otherwise invisible IDs return `404`.
+Taken/Snooze/Skip still use the existing patient-scoped guarded endpoints.
+
+The current push transport supports Android only. Its data payload contains
+`notification_id`, `binding_id`, `kind`, and `expires_at`, with no medical details.
+The app verifies the current account/binding/expiry before displaying generic
+text. Server send acceptance is not a device-delivery receipt. See REMINDERS.md
+for retries, expiration, sign-out behavior, setup and physical-device checks.

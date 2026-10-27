@@ -9,7 +9,7 @@ commits manually. Publishing to a remote and deploying are separate actions.
 | 2 | Medicine lifecycle, caregiver revocation, automatic and complete Level 1 reconciliation | Committed in 37e9e4b |
 | 3 | Incremental migrations, CI, repeatable development and API documentation | Committed in 948c29b |
 | 4 | Flutter app: authentication, patients, medicines, prescriptions, caregivers and dose timeline | Committed in 1cd95c4 |
-| 5 | Actionable notifications, background generation, escalation and family alerts | Stage 5a worker/inbox implemented; Firebase push setup pending |
+| 5 | Actionable notifications, background generation, escalation and family alerts | Stage 5a committed in 115469d; stage 5b implemented; server authentication verified, phone delivery pending |
 | 6 | Live updates and persistent offline dose queue with first-confirmation-wins handling | Pending |
 | 7 | Curated medicine mapping with explicit uncertainty and higher conflict levels | Pending |
 | 8 | Deployment, release builds and end-to-end device verification | Pending |
@@ -51,8 +51,9 @@ clean when stage 3 began. The previous staging instructions are superseded.
 
 Stage 3 was committed as `948c29b` during stage 4 development.
 Stage 4 was committed as `1cd95c4`.
-Stage 5a suggested commit message: `feat: add durable reminders and care alert inbox`.
-Next checkpoint: Firebase setup, device enrollment, push delivery and notification actions.
+Stage 5a was committed as `115469d`.
+Stage 5b suggested commit message: `feat: add Android push enrollment and durable delivery`.
+Next checkpoint: server credential authentication and physical-phone delivery verification.
 
 ## Stage 3 verification - 2026-10-25
 
@@ -133,7 +134,73 @@ Stage 4 is committed. Its core app is extended by the stage 5a work below.
 - Startup instructions, API contract, timing/outage semantics and Firebase
   preparation are in `Docs/REMINDERS.md`. Run both API and worker for reminders.
 
-Stage 5 remains open: the user confirmed Firebase setup is still needed.
-Phone push, lock-screen actions, durable device delivery/retries and real-device
-foreground/background checks are the next checkpoint. Stage 6 live/offline sync,
+Stage 5a was committed as `115469d`. The Android push implementation below
+extends this work; stage 5 remains open until cloud/device proof is complete. Stage 6 live/offline sync,
 stage 7 medicine mapping and stage 8 deployment/release also remain pending.
+
+
+## Stage 5b implementation and verification - 2026-10-27
+
+- Validated the user's Android Google Services file: Firebase project
+  `medisync-4aec5`, package `com.medisync.medisync`. Connected the native Android
+  Firebase default app and kept the web care inbox independent of Firebase.
+- Added explicit Android notification opt-in, secure installation identity,
+  hashed server-side installation secret, account-specific binding, token refresh
+  and collision recovery, logout cleanup and current-account payload filtering.
+- Android foreground/background data handlers display generic notifications
+  with stable IDs. Taken/Snooze/Skip open an authenticated dose review; no
+  notification silently records an outcome. Stale IDs and expired/revoked
+  access still go through server checks and first-confirmation-wins behavior.
+- Added migration 004 and transactional per-device outbox creation, claim leases,
+  retries/backoff, token invalidation, send-time eligibility/access/binding/read
+  checks, graceful stop between sends and explicit FCM acceptance state.
+- Uses Google's authentication library with the FCM HTTP v1 API. The server
+  credential is separate from public Android app configuration. Cloud sends
+  require explicit local configuration, while normal CI/smoke QA always forces
+  them off. No real FCM message has been sent in this checkpoint.
+- Backend verification passed: 45 JavaScript files checked, 19 unit tests and
+  57 isolated PostgreSQL integration tests (76 total). Checked parallel dispatch,
+  retry/lease recovery, invalid tokens, read/snooze/confirmation/revocation
+  cancellation, device ownership and delayed old-account cleanup.
+- Flutter analysis is clean and all 27 API/session/widget tests passed, including
+  notification binding/expiry, session cleanup and explicit dose review.
+- The actual Dart client passed isolated HTTP enrollment, notification detail,
+  read state, shared snooze, family escalation, late confirmation and cleanup.
+- Android debug APK and web profile builds passed. Gradle initially exhausted
+  native memory; bounded the project to a 2GB heap/two workers and rebuilt
+  successfully. Generated Android resources contain the expected Firebase
+  project ID. Crash dumps and Kotlin build caches are ignored.
+- Browser QA passed for notification settings and desktop/390-pixel phone alerts,
+  with actual shared Snooze and Mark read requests and no JavaScript errors.
+  Screenshots were visually inspected. The isolated device-QA helper started
+  its real worker with cloud sending explicitly disabled and passed its
+  authenticated heartbeat check. All QA servers/schemas were cleaned up.
+- Migration 004 applied to the local database; original-table counts and content
+  hashes were unchanged, and repeated application was a no-op.
+- Production dependency audit found no vulnerabilities after compatible lockfile updates.
+- Added `npm run push:check` and an explicit isolated device-QA mode with the
+  background worker. Startup, credential handling, USB reverse connection,
+  delivery semantics and physical-phone acceptance checks are documented in
+  `Docs/REMINDERS.md`.
+
+Still required before stage 5 can be marked complete: prove FCM send permission
+and real foreground/background reminders, notification actions, account switching
+and phone-off family alerts on Android phones. Server OAuth is verified below.
+No Android device was connected during these checks. iOS push/APNs configuration
+and iOS builds remain pending a Mac and Apple developer/device setup.
+
+
+## Firebase server authentication - 2026-10-27
+
+- Found the user's service-account JSON in `backend/credentials/` under the
+  Firebase-generated filename. Its project matches `medisync-4aec5`.
+- Pointed ignored local `.env` at the actual credential filename and explicitly
+  enabled the configured push transport. Database/JWT settings were preserved.
+- `npm run push:check` passed against Google's token service. The private key and
+  access token were not printed. This verifies OAuth authentication, not FCM send
+  permission or device receipt. No notification was sent and no worker was
+  started against development patient data.
+- Verified that the credential file is ignored by Git and remains unstaged.
+- The user has no device available now. Physical-phone acceptance tests remain
+  deferred; stage 5 is not marked complete. Independent stage 6 live/offline work
+  can follow the manual stage 5b implementation commit.

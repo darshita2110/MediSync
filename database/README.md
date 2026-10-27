@@ -36,7 +36,7 @@ dropped every table; it must not be used to upgrade a populated database.
 
 ## Adding a migration
 
-1. Add the next sequential file: `004_description.sql`, `005_description.sql`, etc.
+1. Add the next sequential file: `005_description.sql`, `006_description.sql`, etc.
 2. Keep applied files immutable. SHA-256 checksums reject edited or unknown
    history. Line endings are normalized so Windows and Linux agree.
 3. Put only the forward change in the new file. Do not include `BEGIN`, `COMMIT`,
@@ -76,3 +76,9 @@ composite dose/patient key so inbox entries cannot link a dose from a different
 patient. It does not rewrite existing patient/dose records. Start the separate
 worker only after migrating; its actions are described in
 [Docs/REMINDERS.md](../Docs/REMINDERS.md).
+
+
+Migration 004 adds authenticated Android installation bindings and a durable
+per-device push delivery queue. It preserves existing patient and dose records.
+The private installation secret is stored only as a server hash. Delivery jobs
+store the enrollment binding so stale jobs cannot follow an account switch.

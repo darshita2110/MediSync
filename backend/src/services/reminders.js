@@ -20,14 +20,17 @@ async function notify(client, dose, kind, stage, reference) {
   // Helpers receive today's dose reminders; only the owner/family admins receive
   // escalation alerts. Pending invitations and read-only viewers receive neither.
   await client.query(
-    `INSERT INTO care_notifications (user_id, patient_id, dose_id, kind, stage, created_at)
+    `WITH inserted AS (INSERT INTO care_notifications (user_id, patient_id, dose_id, kind, stage, created_at)
      SELECT pa.user_id, de.patient_id, de.id, $2, $3, $4 FROM dose_events de
      JOIN patients p ON p.id = de.patient_id
      JOIN patient_access pa ON pa.patient_id = p.id AND pa.status = 'accepted'
      WHERE de.id = $1 AND (pa.role IN ('owner', 'family_admin') OR
        ($2 = 'reminder' AND pa.role = 'helper' AND
         (de.scheduled_for AT TIME ZONE p.timezone)::date = ($4::timestamptz AT TIME ZONE p.timezone)::date))
-     ON CONFLICT (user_id, dose_id, stage) DO NOTHING`,
+     ON CONFLICT (user_id, dose_id, stage) DO NOTHING RETURNING id, user_id)
+     INSERT INTO push_deliveries (notification_id, device_id, binding_id, available_at)
+     SELECT n.id, d.id, d.binding_id, $4::timestamptz FROM inserted n JOIN push_devices d ON d.user_id = n.user_id AND d.active
+     ON CONFLICT DO NOTHING`,
     [dose.id, kind, stage, reference.toISOString()]);
 }
 

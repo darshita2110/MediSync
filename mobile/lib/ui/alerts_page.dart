@@ -82,7 +82,7 @@ class _AlertsPageState extends State<AlertsPage> with WidgetsBindingObserver {
       body: ContentList(onRefresh: refresh, children: [
         const SectionTitle('Your care inbox',
             subtitle:
-                'Phone notifications are not enabled yet. Check reminders and family alerts here.'),
+                'Reminders and family alerts, with the latest saved dose status.'),
         if (loading) const LinearProgressIndicator(),
         if (error != null) ...[
           ErrorPanel(error!, retry: refresh),

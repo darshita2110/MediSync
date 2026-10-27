@@ -5,16 +5,21 @@ import 'api.dart';
 import 'app.dart';
 import 'config.dart';
 import 'session.dart';
+import 'push.dart';
 import 'ui/shared.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tz.initializeTimeZones();
   try {
     final api = ApiClient(baseUrl: resolveApiBase());
+    final repo = Repository(api);
+    final push = PushController(repo);
+    await push.initialize();
     final controller = SessionController(
-        Repository(api), kIsWeb ? MemorySessionStore() : SecureSessionStore());
-    runApp(MediSyncApp(controller: controller));
+        repo, kIsWeb ? MemorySessionStore() : SecureSessionStore(),
+        notifications: push);
+    runApp(MediSyncApp(controller: controller, push: push));
     controller.initialize();
   } on FormatException {
     runApp(MaterialApp(
